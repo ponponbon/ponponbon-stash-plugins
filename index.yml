@@ -1,5 +1,3 @@
-updated: 2025-10-25
-
 plugins:
   - id: gridadjust
     name: gridadjust
@@ -8,4 +6,5 @@ plugins:
     version: "0.1-74bba71"
     date: "2025-10-25 18:03:31"
     path: gridadjust.zip
+
     sha256: 773cd36722b206d220a564814a4cc950e2c846eb00350ed1aea7dca32e1bd99d
