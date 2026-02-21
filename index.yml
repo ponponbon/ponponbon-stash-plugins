@@ -5,7 +5,7 @@
   version: "1.3-26f428e"
   date: "2026-02-21 23:29:31"
   path: merge_multipart.zip
-  sha256: 9ee1aa1e4f2b8fc7f6a8b2a5211e11870f992ba79d321bf5fc742f95c8d2891a
+  sha256: aa1f8feaf4b146f81f285c9de56f49a8eb9dea0af404abd176214873d2fd6d0d
 - id: extrafanart_gallery
   name: extrafanart_gallery
   metadata:
@@ -21,4 +21,4 @@
   version: "1.0"
   date: "2026-02-21 19:49:00"
   path: performer_name_sync.zip
-  sha256: bf9183c6b70488035112fb1d5ba7e4933a44aac07cc4d29f4d54b292f7cafb33
+  sha256: 52636479e13a03249f305c0ec1382a37fc172234c5cdd43dda8f18a71967b802
