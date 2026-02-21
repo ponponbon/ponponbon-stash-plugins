@@ -32,7 +32,7 @@ def normalize_graphql_url(url: str) -> str:
 
 def get_stash_url(plugin_input, server_connection):
     args = plugin_input.get("args", {})
-    if args.get("stash_url"):
+    if args.get("d_stash_url"):
         return normalize_graphql_url(args["stash_url"]), "plugin arg"
     env_url = os.environ.get("STASH_URL")
     if env_url:
@@ -73,20 +73,20 @@ server_connection = plugin_input.get("server_connection", {})
 args = plugin_input.get("args", {})
 
 STASH_URL, URL_SOURCE = get_stash_url(plugin_input, server_connection)
-API_KEY = get_plugin_setting(plugin_input, "api_key", os.environ.get("STASH_API_KEY", ""))
-VR_TAG_NAME = get_plugin_setting(plugin_input, "vr_tag_name", "VR")
-MULTIPART_TAG_NAME = get_plugin_setting(plugin_input, "multipart_tag_name", "Multipart")
+API_KEY = get_plugin_setting(plugin_input, "e_api_key", os.environ.get("STASH_API_KEY", ""))
+VR_TAG_NAME = get_plugin_setting(plugin_input, "a_vr_tag", "VR")
+MULTIPART_TAG_NAME = get_plugin_setting(plugin_input, "b_multipart_tag", "Multipart")
 
 # "vr_only" restricts merging to scenes that already carry the VR tag
-VR_ONLY = str(get_plugin_setting(plugin_input, "vr_only", "false")).lower() == "true"
+VR_ONLY = str(get_plugin_setting(plugin_input, "c_vr_only", "false")).lower() == "true"
 
 mode = args.get("mode", "merge")
 DRY_RUN = (mode == "preview") or (
     str(get_plugin_setting(plugin_input, "dry_run", "false")).lower() == "true"
 )
 
-# Milliseconds to sleep between merge mutations
-MERGE_DELAY_S = float(get_plugin_setting(plugin_input, "merge_delay_ms", "200")) / 1000.0
+# Milliseconds to sleep between merge mutations — avoids hammering Stash on large libraries
+MERGE_DELAY_S = float(get_plugin_setting(plugin_input, "f_merge_delay", "200")) / 1000.0
 
 LOG_MESSAGES: List[str] = []
 
@@ -120,15 +120,17 @@ else:
 # Part-number detection
 # ---------------------------------------------------------------------------
 
+# Matches: pt1, part-02, cd2, disc iii  (surrounded by word/path separators)
 PART_TOKEN = re.compile(
     r"(?ix)"
     r"(?:^|[ _.\-\(\)\[\]])"
     r"(?:pt|part|cd|disc)"
     r"[ _.\-]*"
     r"(?P<num>(?:\d{1,2}|[ivx]{1,6}))"
-    r"(?=$|[ _.\-\(\)\[\]])"
+    r"(?=$|[ _.\-\(\)\[\]])"   # lookahead — don't consume trailing separator
 )
 
+# Matches trailing A/B split only when the letter is a standalone token
 AB_TOKEN = re.compile(
     r"(?i)(?:^|[ _.\-\(\)\[\]])(?P<ab>[AB])(?=$|[ _.\-\(\)\[\]])"
 )
@@ -145,6 +147,10 @@ def roman_to_int(s: str) -> Optional[int]:
 
 
 def normalize_basename(name: str) -> Tuple[str, Optional[int]]:
+    """
+    Return (base_without_part_token, part_number_or_None).
+    Handles numeric parts, roman numerals, and A/B suffixes.
+    """
     stem = pathlib.Path(name).stem
 
     m = PART_TOKEN.search(stem)
@@ -154,6 +160,7 @@ def normalize_basename(name: str) -> Tuple[str, Optional[int]]:
             part = int(raw)
         except ValueError:
             part = roman_to_int(raw)
+        # Strip the matched token (replace with a space then normalise whitespace)
         base = stem[: m.start()] + " " + stem[m.end() :]
         base = re.sub(r"\s{2,}", " ", base).strip()
         return base, part
@@ -263,16 +270,17 @@ def scene_merge(target_id: str, source_ids: List[str]):
 
 
 # ---------------------------------------------------------------------------
-# Title cleanup
+# Title cleanup — strip part tokens safely
 # ---------------------------------------------------------------------------
 
+# Only strip explicit part tokens; won't touch words like "Discount" or "Disc Jockey"
 _PART_STRIP = re.compile(
     r"(?i)"
-    r"(?:^|(?<=[ _.\-]))"
+    r"(?:^|(?<=[ _.\-]))"          # start or preceded by separator
     r"(?:pt|part|cd|disc)"
     r"[ _.\-]*"
     r"(?:\d{1,2}|[ivx]{1,6})"
-    r"(?=$|[ _.\-])"
+    r"(?=$|[ _.\-])"               # end or followed by separator
 )
 
 
@@ -301,6 +309,7 @@ def main():
     vr_tag_id = get_or_create_tag(VR_TAG_NAME) if VR_TAG_NAME else None
     mp_tag_id = get_or_create_tag(MULTIPART_TAG_NAME)
 
+    # ---- Paginate all scenes ------------------------------------------------
     page, per_page = 1, 200
     total, scenes = fetch_scenes_page(page, per_page)
     pages = max(1, math.ceil(total / per_page))
@@ -311,9 +320,11 @@ def main():
         all_scenes.extend(scenes)
     log_info(f"Fetched {len(all_scenes)} scenes (total reported: {total})")
 
+    # ---- Group by (directory, normalised base) ------------------------------
     groups: Dict[Tuple[str, str], List[Dict]] = {}
 
     for sc in all_scenes:
+        # Optionally restrict to VR-tagged scenes only
         if VR_ONLY and vr_tag_id:
             if not any(t["id"] == vr_tag_id for t in sc["tags"]):
                 continue
@@ -326,11 +337,12 @@ def main():
         base, part = normalize_basename(f["basename"])
 
         if part is None:
-            continue
+            continue  # not a recognised multipart file
 
         key = (dirpath, base.lower())
         groups.setdefault(key, []).append({"scene": sc, "part": part, "basename": f["basename"]})
 
+    # ---- Plan and execute merges --------------------------------------------
     merged_count = 0
     skipped_count = 0
     merge_summary = []
@@ -341,6 +353,7 @@ def main():
 
         dirpath, base = key
 
+        # Detect duplicate part numbers within the same group
         part_nums = [it["part"] for it in items]
         if len(part_nums) != len(set(part_nums)):
             log_info(f"\n⚠  SKIPPING — duplicate part numbers in group: {dirpath} :: {base}")
@@ -357,15 +370,18 @@ def main():
         target = items[0]["scene"]
         sources = [it["scene"]["id"] for it in items[1:]]
 
+        # Merge sources into target
         scene_merge(target["id"], sources)
         merged_count += 1
 
+        # Build new tag set
         tag_ids = {t["id"] for t in target["tags"]}
         tag_ids.add(mp_tag_id)
         if vr_tag_id:
             tag_ids.add(vr_tag_id)
         scene_update_tags(target["id"], list(tag_ids))
 
+        # Clean title
         new_title = clean_title(target["title"] or "")
         if new_title and new_title != target["title"]:
             log_info(f"  Title: {target['title']!r}  →  {new_title!r}")
@@ -381,6 +397,7 @@ def main():
         if MERGE_DELAY_S > 0 and not DRY_RUN:
             time.sleep(MERGE_DELAY_S)
 
+    # ---- Summary ------------------------------------------------------------
     result_message = (
         f"Done.  Groups merged: {merged_count}  |  Skipped (conflicts): {skipped_count}"
     )

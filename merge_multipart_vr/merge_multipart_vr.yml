@@ -1,6 +1,6 @@
 name: Merge Multipart VR Scenes
 description: Detects multi-part scenes (pt1/pt2, part-01/02, cd1/cd2, disc i/ii, A/B splits), merges them into a single Stash scene, and applies Multipart and VR tags.
-version: "1.03-e0a9730"
+version: "1.02-b4bfc54"
 url: ""
 
 exec:
@@ -21,20 +21,32 @@ tasks:
       mode: merge
 
 settings:
-  vr_tag_name:
-    displayName: "6. VR Tag Name"
+  a_vr_tag:
+    displayName: VR Tag Name
+    description: Tag applied to merged VR scenes. Default "VR"
+    type: STRING
 
-  multipart_tag_name:
-    displayName: "5. Multipart Tag Name"
+  b_multipart_tag:
+    displayName: Multipart Tag Name
+    description: Tag applied to all merged scenes. Default "Multipart"
+    type: STRING
 
-  vr_only:
-    displayName: "4. VR Scenes Only"
+  c_vr_only:
+    displayName: VR Scenes Only
+    description: When enabled, only scenes already tagged with the VR tag will be considered
+    type: BOOLEAN
 
-  stash_url:
-    displayName: "3. Stash URL"
+  d_stash_url:
+    displayName: Stash URL
+    description: Override the GraphQL endpoint. Leave blank to auto-detect. e.g. http://localhost:9999
+    type: STRING
 
-  api_key:
-    displayName: "2. API Key"
+  e_api_key:
+    displayName: API Key
+    description: Only required if authentication is enabled in Stash. Leave blank otherwise
+    type: STRING
 
-  merge_delay_ms:
-    displayName: "1. Delay Between Merges (ms)"
+  f_merge_delay:
+    displayName: Delay Between Merges (ms)
+    description: Milliseconds to wait between merge operations. Increase if you experience timeouts. Default 200
+    type: NUMBER
