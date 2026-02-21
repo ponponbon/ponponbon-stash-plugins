@@ -24,20 +24,26 @@ jobs:
       - name: Detect changed plugin
         id: plugin
         run: |
-          CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || git diff --name-only HEAD)
+          # Use the GitHub API-provided changed files via git diff
+          CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || git show --name-only --format="" HEAD)
+          echo "Changed files: $CHANGED"
           if echo "$CHANGED" | grep -q '^merge_multipart_vr/'; then
             echo "folder=merge_multipart_vr" >> $GITHUB_OUTPUT
             echo "id=merge_multipart" >> $GITHUB_OUTPUT
             echo "zip=merge_multipart.zip" >> $GITHUB_OUTPUT
             echo "yml=merge_multipart_vr/merge_multipart_vr.yml" >> $GITHUB_OUTPUT
+            echo "Detected: merge_multipart_vr"
           elif echo "$CHANGED" | grep -q '^extrafanart_gallery/'; then
             echo "folder=extrafanart_gallery" >> $GITHUB_OUTPUT
             echo "id=extrafanart_gallery" >> $GITHUB_OUTPUT
             echo "zip=extrafanart_gallery.zip" >> $GITHUB_OUTPUT
             echo "yml=extrafanart_gallery/extrafanart_gallery.yml" >> $GITHUB_OUTPUT
+            echo "Detected: extrafanart_gallery"
           else
-            echo "No recognised plugin folder changed, exiting."
-            exit 0
+            echo "No recognised plugin folder changed."
+            echo "Full diff was:"
+            echo "$CHANGED"
+            exit 1
           fi
 
       - name: Get and increment version
