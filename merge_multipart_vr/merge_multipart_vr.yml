@@ -21,32 +21,32 @@ tasks:
       mode: merge
 
 settings:
-  stash_url:
-    displayName: Stash URL
-    description: Override the GraphQL endpoint, e.g. http://localhost:9999
-    type: STRING
-
   api_key:
-    displayName: API Key
+    displayName: "5. API Key"
     description: Leave blank if authentication is disabled
     type: STRING
 
-  vr_tag_name:
-    displayName: VR Tag Name
-    description: Name of the tag to apply to merged VR scenes (default "VR")
-    type: STRING
+  merge_delay_ms:
+    displayName: "6. Delay Between Merges (ms)"
+    description: Milliseconds to wait between each merge mutation. Default 200.
+    type: NUMBER
 
   multipart_tag_name:
-    displayName: Multipart Tag Name
+    displayName: "2. Multipart Tag Name"
     description: Name of the tag applied to all merged scenes (default "Multipart")
     type: STRING
 
+  stash_url:
+    displayName: "4. Stash URL"
+    description: Override the GraphQL endpoint, e.g. http://localhost:9999
+    type: STRING
+
   vr_only:
-    displayName: VR Scenes Only
+    displayName: "3. VR Scenes Only"
     description: Only consider scenes already tagged with the VR tag
     type: BOOLEAN
 
-  merge_delay_ms:
-    displayName: Delay Between Merges (ms)
-    description: Milliseconds to wait between each merge mutation. Default 200.
-    type: NUMBER
+  vr_tag_name:
+    displayName: "1. VR Tag Name"
+    description: Name of the tag to apply to merged VR scenes (default "VR")
+    type: STRING
