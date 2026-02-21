@@ -11,10 +11,12 @@ sha256    = os.environ["SHA"]
 descriptions = {
     "merge_multipart":     "Merges multipart and VR videos",
     "extrafanart_gallery": "Scans scene directories for extrafanart subfolders, imports their images as galleries, sets the cover image, and links them to parent scenes",
+    "performer_name_sync": "Cross-references JavStash and StashDB stash-box endpoints to update performer names from Japanese to English",
 }
 names = {
     "merge_multipart":     "merge_multipart",
     "extrafanart_gallery": "extrafanart_gallery",
+    "performer_name_sync": "performer_name_sync",
 }
 
 if plugin_id not in descriptions:

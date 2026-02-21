@@ -1,3 +1,4 @@
+# testupdate - verify CI pipeline packages all plugins correctly
 """
 Extrafanart Gallery Linker - Stash Plugin
 ==========================================

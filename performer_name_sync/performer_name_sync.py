@@ -1,3 +1,4 @@
+# testupdate - verify CI pipeline packages all plugins correctly
 """
 Performer Name Sync - Stash Plugin
 ===================================

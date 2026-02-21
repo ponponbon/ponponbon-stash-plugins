@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# testupdate - verify CI pipeline packages all plugins correctly
 import os
 import re
 import sys
