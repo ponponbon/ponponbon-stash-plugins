@@ -14,7 +14,6 @@ import sys
 import json
 import os
 import base64
-import time
 
 try:
     import requests
@@ -33,8 +32,6 @@ COVER_CANDIDATES = [
     "board.jpg",  "board.jpeg",  "board.png",  "board.webp",
 ]
 FANART_FOLDER_NAME = "extrafanart"
-SCAN_POLL_INTERVAL = 2        # seconds between job-status polls
-SCAN_TIMEOUT       = 300      # max seconds to wait for a scan job
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +158,7 @@ class StashClient:
     # ---- mutations --------------------------------------------------------
 
     def trigger_scan(self, paths):
-        """Start a metadata scan for specific paths. Returns job ID or None."""
+        """Start a metadata scan for specific paths (fire-and-forget)."""
         mutation = """
         mutation MetadataScan($input: ScanMetadataInput!) {
           metadataScan(input: $input)
@@ -169,35 +166,6 @@ class StashClient:
         variables = {"input": {"paths": paths}}
         data = self.call(mutation, variables)
         return data.get("metadataScan")
-
-    def wait_for_job(self, job_id, timeout=SCAN_TIMEOUT):
-        """Poll until a job completes. Returns True on success."""
-        if not job_id:
-            return False
-        query = """
-        query FindJob($input: FindJobInput!) {
-          findJob(input: $input) {
-            id
-            status
-            progress
-          }
-        }"""
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            data = self.call(query, {"input": {"id": job_id}})
-            job = data.get("findJob")
-            if not job:
-                # Job may have already finished and been cleaned up
-                return True
-            status = job.get("status", "")
-            if status in ("FINISHED", "COMPLETE"):
-                return True
-            if status in ("FAILED", "CANCELLED"):
-                log_error(f"Scan job {job_id} ended with status: {status}")
-                return False
-            time.sleep(SCAN_POLL_INTERVAL)
-        log_error(f"Scan job {job_id} timed out after {timeout}s")
-        return False
 
     def set_gallery_cover(self, gallery_id, cover_b64):
         mutation = """
@@ -295,19 +263,14 @@ def process(client, dry_run=False):
         for p in paths_to_scan:
             log_info(f"    • {p}")
         if not dry_run:
-            log_info("  Triggering metadata scan...")
+            log_info("  Triggering metadata scan (runs in background)...")
             job_id = client.trigger_scan(paths_to_scan)
             if job_id:
-                log_info(f"  Scan job started (ID: {job_id}). Waiting for completion...")
-                ok = client.wait_for_job(job_id)
-                if ok:
-                    log_info("  Scan completed.")
-                else:
-                    log_error("  Scan did not complete successfully; continuing anyway.")
+                log_info(f"  Scan job queued (ID: {job_id}).")
+                log_info(f"  >> The scan runs in the background. Run this task again")
+                log_info(f"  >> after the scan finishes to set covers and link galleries.")
             else:
                 log_error("  Failed to start scan job.")
-            # Refresh gallery map after scan
-            existing = client.find_galleries_by_paths(ef_paths)
         else:
             log_info("  [DRY RUN] Would scan these paths to create galleries.")
     else:
@@ -335,8 +298,8 @@ def process(client, dry_run=False):
                     log_info(f"  [DRY RUN] Would link to scene: {s.get('title') or s['id']}")
                     results["linked"] += 1
             else:
-                log_error(f"  Gallery not found for {ef_path} even after scan, skipping.")
-                results["errors"] += 1
+                log_info(f"  Skipping {ef_path} (gallery not yet created — waiting for scan)")
+                results["skipped"] += 1
             continue
 
         gid = gallery["id"]

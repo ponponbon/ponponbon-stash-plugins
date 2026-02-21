@@ -13,11 +13,10 @@ tasks:
   - name: "Link Extrafanart Galleries"
     description: >
       Scans scene directories for a subfolder named extrafanart.
-      If found, the images inside are imported as a gallery associated
-      with that scene's parent folder. The gallery cover is set to the
-      folder's existing cover image (such as folder.jpg or poster.png),
-      and the gallery is linked to any scene files located in the same
-      directory.
+      If found, triggers a background scan to import images as galleries,
+      sets the cover from folder.jpg/poster.png in the parent directory,
+      and links each gallery to its scene. If new folders were scanned,
+      run this task again after the scan finishes.
     defaultArgs:
       mode: "link"
 
