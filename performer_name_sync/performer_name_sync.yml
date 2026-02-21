@@ -4,7 +4,7 @@ description: >
   performer names. For performers with a Japanese primary name and a
   JavStash stash-box ID, finds the English (Latin) name via JavStash
   aliases and optionally upgrades it with StashDB's canonical name.
-version: "1.1-6bad3c7"
+version: "1.2-e7e935b"
 url: https://github.com/ponponbon/ponponbon-stash-plugins
 
 exec:
