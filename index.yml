@@ -1,9 +1,8 @@
-- id: gridadjust
-  name: gridadjust
+- id: merge_multipart
+  name: merge_multipart
   metadata:
-    description: Personal Grid Adjustment
-  version: "0.1-74bba71"
-  date: "2025-10-25 18:03:31"
-  path: gridadjust.zip
-  sha256: 221b7d2140559c15abe484b04cc7bd9ba27721707c26cd6fbaee81572d0484af
-
+    description: Merges multipart and VR videos
+  version: "1.0"
+  date: "2026-02-21 00:00:00"
+  path: merge_multipart.zip
+  sha256: 0b36b5e6d4f595bb7cd51ede197ca366c9fc2c34c63cd3237a6a7a23c875783e
