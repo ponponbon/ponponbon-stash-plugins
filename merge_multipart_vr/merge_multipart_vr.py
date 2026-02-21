@@ -289,7 +289,6 @@ def clean_title(title: str) -> str:
     cleaned = re.sub(r"[ _.\-]{2,}", " ", cleaned).strip(" _.-")
     return cleaned if cleaned else title
 
-
 # ---------------------------------------------------------------------------
 # Main logic
 # ---------------------------------------------------------------------------
