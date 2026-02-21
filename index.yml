@@ -2,10 +2,10 @@
   name: merge_multipart
   metadata:
     description: Merges multipart and VR videos
-  version: "1.1-38bfb32"
-  date: "2026-02-21 17:23:29"
+  version: "1.2-f62ff3c"
+  date: "2026-02-21 17:28:00"
   path: merge_multipart.zip
-  sha256: b812812a9dcf2c4f8afdc9155164617adb95264ac5321e3be611ce3d9fff6d06
+  sha256: 27acd7455e958adfe42b324afa965c9d0ad8b9a03f45232b028a846bbb57aecd
 - id: extrafanart_gallery
   name: extrafanart_gallery
   metadata:
