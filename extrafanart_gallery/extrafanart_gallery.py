@@ -1,396 +1,274 @@
 """
-Extrafanart Gallery Linker – Stash Plugin
+Extrafanart Gallery Linker - Stash Plugin
 ==========================================
 Scans scene directories for a subfolder named extrafanart.
-If found, the images inside are imported as a gallery associated with
-that scene's parent folder. The gallery cover is set to the folder's
-existing cover image (such as folder.jpg or poster.png), and the gallery
-is linked to any scene files located in the same directory.
+If found, creates a gallery from the images inside (via GraphQL, not
+metadataScan), sets the cover image, and links the gallery to any
+scene files in the same parent directory.
 
 Install:  pip install requests
 """
-
-import sys
-import json
-import os
-import base64
-
+import sys, json, os, base64
 try:
     import requests
 except ImportError:
-    print("ERROR: 'requests' module not found. Run: pip install requests",
-          file=sys.stderr)
+    print("ERROR: 'requests' module not found.", file=sys.stderr)
     sys.exit(1)
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
 COVER_CANDIDATES = [
     "folder.jpg", "folder.jpeg", "folder.png", "folder.webp",
     "poster.jpg", "poster.jpeg", "poster.png", "poster.webp",
     "cover.jpg",  "cover.jpeg",  "cover.png",  "cover.webp",
     "board.jpg",  "board.jpeg",  "board.png",  "board.webp",
 ]
-FANART_FOLDER_NAME = "extrafanart"
+FANART_FOLDER = "extrafanart"
 
+# --- Logging (Stash raw plugin protocol on stderr) ---
+def log(msg):
+    # \x01=trace \x02=debug \x03=info \x04=warning \x05=error \x06=progress
+    print(f"\x03{msg}", file=sys.stderr, flush=True)
 
-# ---------------------------------------------------------------------------
-# Logging (Stash log protocol)
-# ---------------------------------------------------------------------------
-def log_info(msg):
-    print(f"\x02INFO: {msg}", file=sys.stderr); sys.stderr.flush()
+def log_warn(msg):
+    print(f"\x04{msg}", file=sys.stderr, flush=True)
 
-def log_error(msg):
-    print(f"\x03ERROR: {msg}", file=sys.stderr); sys.stderr.flush()
+def log_err(msg):
+    print(f"\x05{msg}", file=sys.stderr, flush=True)
 
 def log_progress(pct):
-    print(f"\x05{pct:.2f}", file=sys.stderr); sys.stderr.flush()
+    print(f"\x06{pct:.2f}", file=sys.stderr, flush=True)
 
-
-# ---------------------------------------------------------------------------
-# GraphQL client
-# ---------------------------------------------------------------------------
-class StashClient:
+# --- GraphQL client ---
+class GQL:
     def __init__(self, scheme, host, port, api_key=None):
         self.url = f"{scheme}://{host}:{port}/graphql"
-        self.session = requests.Session()
-        self.session.headers["Content-Type"] = "application/json"
+        self.s = requests.Session()
+        self.s.headers["Content-Type"] = "application/json"
         if api_key:
-            self.session.headers["ApiKey"] = api_key
+            self.s.headers["ApiKey"] = api_key
 
-    def call(self, query, variables=None):
-        payload = {"query": query}
+    def q(self, query, variables=None):
+        body = {"query": query}
         if variables:
-            payload["variables"] = variables
-        try:
-            resp = self.session.post(self.url, json=payload, timeout=30)
-            resp.raise_for_status()
-            body = resp.json()
-            if "errors" in body:
-                for e in body["errors"]:
-                    log_error(f"GraphQL: {e.get('message', e)}")
-            return body.get("data", {})
-        except requests.RequestException as exc:
-            log_error(f"Request failed: {exc}")
-            return {}
+            body["variables"] = variables
+        r = self.s.post(self.url, json=body, timeout=30)
+        r.raise_for_status()
+        j = r.json()
+        if "errors" in j:
+            for e in j["errors"]:
+                log_err(f"GQL: {e.get('message', e)}")
+        return j.get("data", {})
 
-    # ---- queries ----------------------------------------------------------
+    def all_scenes(self):
+        d = self.q("""query{findScenes(filter:{per_page:-1}){
+            scenes{id title files{path} galleries{id}}}}""")
+        return d.get("findScenes",{}).get("scenes",[])
 
-    def get_all_scenes(self):
-        """Return every scene with its id, title, file paths, and linked gallery ids."""
-        query = """
-        query AllScenes($filter: FindFilterType) {
-          findScenes(filter: $filter) {
-            count
-            scenes {
-              id
-              title
-              files { path }
-              galleries { id }
-            }
-          }
-        }"""
-        data = self.call(query, {"filter": {"per_page": -1}})
-        return data.get("findScenes", {}).get("scenes", [])
+    def find_galleries_for_paths(self, folder_paths):
+        """Return {norm_path: gallery} for extrafanart galleries."""
+        d = self.q("""query($f:FindFilterType,$gf:GalleryFilterType){
+            findGalleries(filter:$f,gallery_filter:$gf){galleries{
+            id title folder{path} scenes{id}}}}""",
+            {"f":{"per_page":-1},"gf":{"path":{"value":FANART_FOLDER,"modifier":"INCLUDES"}}})
+        gals = d.get("findGalleries",{}).get("galleries",[])
+        norms = {os.path.normpath(p) for p in folder_paths}
+        out = {}
+        for g in gals:
+            fp = g.get("folder") or {}
+            gp = os.path.normpath(fp.get("path",""))
+            if gp in norms:
+                out[gp] = g
+        return out
 
-    def find_gallery_by_folder(self, folder_path):
-        """Find a gallery whose folder path matches exactly."""
-        query = """
-        query FindGalleries($filter: FindFilterType, $gallery_filter: GalleryFilterType) {
-          findGalleries(filter: $filter, gallery_filter: $gallery_filter) {
-            galleries {
-              id
-              title
-              folder { path }
-              scenes { id }
-            }
-          }
-        }"""
-        # Use the folder name as a broad filter, then exact-match client-side
-        variables = {
-            "filter": {"per_page": -1},
-            "gallery_filter": {
-                "path": {"value": folder_path, "modifier": "EQUALS"}
-            }
-        }
-        data = self.call(query, variables)
-        galleries = data.get("findGalleries", {}).get("galleries", [])
+    def find_images_in_path(self, folder_path):
+        """Find images whose file path starts with folder_path."""
+        d = self.q("""query($f:FindFilterType,$if:ImageFilterType){
+            findImages(filter:$f,image_filter:$if){images{id
+            files{path} galleries{id}}}}""",
+            {"f":{"per_page":-1},"if":{"path":{"value":folder_path,"modifier":"INCLUDES"}}})
+        imgs = d.get("findImages",{}).get("images",[])
         norm = os.path.normpath(folder_path)
-        for g in galleries:
-            folder = g.get("folder")
-            if folder and os.path.normpath(folder.get("path", "")) == norm:
-                return g
-        return None
+        return [i for i in imgs if any(
+            os.path.normpath(os.path.dirname(f.get("path",""))) == norm
+            for f in i.get("files",[]))]
 
-    def find_galleries_by_paths(self, folder_paths):
-        """Return a dict {normalised_path: gallery} for a batch of paths."""
-        if not folder_paths:
-            return {}
-        query = """
-        query FindGalleries($filter: FindFilterType, $gallery_filter: GalleryFilterType) {
-          findGalleries(filter: $filter, gallery_filter: $gallery_filter) {
-            galleries {
-              id
-              title
-              folder { path }
-              scenes { id }
-            }
-          }
-        }"""
-        variables = {
-            "filter": {"per_page": -1},
-            "gallery_filter": {
-                "path": {"value": FANART_FOLDER_NAME, "modifier": "INCLUDES"}
-            }
-        }
-        data = self.call(query, variables)
-        galleries = data.get("findGalleries", {}).get("galleries", [])
-        norm_set = {os.path.normpath(p) for p in folder_paths}
-        result = {}
-        for g in galleries:
-            folder = g.get("folder")
-            if folder:
-                gp = os.path.normpath(folder.get("path", ""))
-                if gp in norm_set:
-                    result[gp] = g
-        return result
+    def create_gallery(self, title, scene_ids=None):
+        inp = {"title": title}
+        if scene_ids:
+            inp["scene_ids"] = scene_ids
+        d = self.q("""mutation($i:GalleryCreateInput!){
+            galleryCreate(input:$i){id}}""", {"i": inp})
+        return (d.get("galleryCreate") or {}).get("id")
 
-    # ---- mutations --------------------------------------------------------
+    def add_images(self, gallery_id, image_ids):
+        self.q("""mutation($i:GalleryAddInput!){
+            addGalleryImages(input:$i)}""",
+            {"i":{"gallery_id":gallery_id,"image_ids":image_ids}})
 
-    def trigger_scan(self, paths):
-        """Start a metadata scan for specific paths (fire-and-forget)."""
-        mutation = """
-        mutation MetadataScan($input: ScanMetadataInput!) {
-          metadataScan(input: $input)
-        }"""
-        variables = {"input": {"paths": paths}}
-        data = self.call(mutation, variables)
-        return data.get("metadataScan")
+    def set_cover(self, gallery_id, b64):
+        self.q("""mutation($i:GalleryUpdateInput!){
+            galleryUpdate(input:$i){id}}""",
+            {"i":{"id":gallery_id,"cover_image":b64}})
 
-    def set_gallery_cover(self, gallery_id, cover_b64):
-        mutation = """
-        mutation GalleryUpdate($input: GalleryUpdateInput!) {
-          galleryUpdate(input: $input) { id }
-        }"""
-        data = self.call(mutation, {
-            "input": {"id": gallery_id, "cover_image": cover_b64}
-        })
-        return bool(data.get("galleryUpdate"))
+    def link_scene(self, scene_id, gallery_id, existing_gids):
+        all_ids = list(set(existing_gids + [gallery_id]))
+        self.q("""mutation($i:SceneUpdateInput!){
+            sceneUpdate(input:$i){id}}""",
+            {"i":{"id":scene_id,"gallery_ids":all_ids}})
 
-    def link_gallery_to_scene(self, scene_id, gallery_id, existing_gallery_ids):
-        """Add gallery to a scene's gallery list (preserving existing)."""
-        all_ids = list(set(existing_gallery_ids + [gallery_id]))
-        mutation = """
-        mutation SceneUpdate($input: SceneUpdateInput!) {
-          sceneUpdate(input: $input) { id }
-        }"""
-        data = self.call(mutation, {
-            "input": {"id": scene_id, "gallery_ids": all_ids}
-        })
-        return bool(data.get("sceneUpdate"))
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def find_cover_image(directory):
-    """Return path of a cover image in *directory*, or None."""
+# --- Helpers ---
+def find_cover(d):
     try:
-        entries = {e.lower(): e for e in os.listdir(directory)}
+        entries = {e.lower(): e for e in os.listdir(d)}
     except OSError:
         return None
-    for candidate in COVER_CANDIDATES:
-        if candidate in entries:
-            return os.path.join(directory, entries[candidate])
+    for c in COVER_CANDIDATES:
+        if c in entries:
+            return os.path.join(d, entries[c])
     return None
 
-
-def image_to_base64(path):
+def img_b64(path):
     ext = os.path.splitext(path)[1].lower().lstrip(".")
-    mime = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "webp": "webp"}.get(ext, "jpeg")
-    with open(path, "rb") as f:
-        data = base64.b64encode(f.read()).decode()
-    return f"data:image/{mime};base64,{data}"
+    mime = {"jpg":"jpeg","jpeg":"jpeg","png":"png","webp":"webp"}.get(ext,"jpeg")
+    with open(path,"rb") as f:
+        return f"data:image/{mime};base64,{base64.b64encode(f.read()).decode()}"
 
+# --- Core ---
+def process(gql, dry_run=False):
+    # Phase 1: Find scene directories with extrafanart subfolders
+    log("Phase 1: Finding scenes with extrafanart folders...")
+    scenes = gql.all_scenes()
+    log(f"  {len(scenes)} scene(s) in Stash")
 
-# ---------------------------------------------------------------------------
-# Core logic
-# ---------------------------------------------------------------------------
-
-def process(client, dry_run=False):
-    """
-    Phase 1 – Discover extrafanart folders by walking scene directories.
-    Phase 2 – Scan/import any folders that don't yet have a gallery.
-    Phase 3 – Set covers and link galleries to their parent scenes.
-    """
-
-    # ── Phase 1: discover ─────────────────────────────────────────────────
-    log_info("Phase 1: Fetching all scenes and scanning for extrafanart folders...")
-    scenes = client.get_all_scenes()
-    log_info(f"  Found {len(scenes)} scene(s) in Stash.")
-
-    # Map scene-directory → list of scene dicts
-    dir_scenes = {}   # {normalised_dir: [scene, ...]}
-    for scene in scenes:
-        for f in scene.get("files", []):
+    dir_scenes = {}
+    for sc in scenes:
+        for f in sc.get("files", []):
             d = os.path.normpath(os.path.dirname(f.get("path", "")))
-            dir_scenes.setdefault(d, []).append(scene)
+            dir_scenes.setdefault(d, []).append(sc)
 
-    # Check each scene directory for an extrafanart subfolder
-    # targets: [(parent_dir, extrafanart_path, [scene, ...])]
     targets = []
-    for d, scene_list in dir_scenes.items():
-        ef = os.path.join(d, FANART_FOLDER_NAME)
+    for d, slist in dir_scenes.items():
+        ef = os.path.join(d, FANART_FOLDER)
         if os.path.isdir(ef):
-            targets.append((d, ef, scene_list))
+            targets.append((d, ef, slist))
 
-    log_info(f"  Found {len(targets)} scene director(y/ies) with an '{FANART_FOLDER_NAME}' subfolder.")
-
+    log(f"  {len(targets)} dir(s) with '{FANART_FOLDER}' subfolder")
     if not targets:
-        log_info("Nothing to do.")
+        log("Nothing to do.")
         return
 
-    # ── Phase 2: ensure galleries exist ───────────────────────────────────
-    log_info("Phase 2: Checking for existing galleries and scanning missing ones...")
-
+    # Phase 2: Check for existing folder-based galleries
     ef_paths = [ef for _, ef, _ in targets]
-    existing = client.find_galleries_by_paths(ef_paths)
-    paths_to_scan = [ef for ef in ef_paths if os.path.normpath(ef) not in existing]
+    existing_gals = gql.find_galleries_for_paths(ef_paths)
+    log(f"  {len(existing_gals)} existing folder-based gallery/galleries found")
 
-    if paths_to_scan:
-        log_info(f"  {len(paths_to_scan)} extrafanart folder(s) need scanning:")
-        for p in paths_to_scan:
-            log_info(f"    • {p}")
-        if not dry_run:
-            log_info("  Triggering metadata scan (runs in background)...")
-            job_id = client.trigger_scan(paths_to_scan)
-            if job_id:
-                log_info(f"  Scan job queued (ID: {job_id}).")
-                log_info(f"  >> The scan runs in the background. Run this task again")
-                log_info(f"  >> after the scan finishes to set covers and link galleries.")
-            else:
-                log_error("  Failed to start scan job.")
-        else:
-            log_info("  [DRY RUN] Would scan these paths to create galleries.")
-    else:
-        log_info("  All extrafanart folders already have galleries.")
-
-    # ── Phase 3: set covers & link ────────────────────────────────────────
-    log_info("Phase 3: Setting covers and linking galleries to scenes...")
-    results = {"cover_set": 0, "linked": 0, "skipped": 0, "errors": 0}
+    # Phase 3: Process each target
+    log("Phase 2: Processing galleries...")
+    stats = {"created": 0, "covers": 0, "linked": 0, "skipped": 0, "errors": 0}
     total = len(targets)
 
-    for i, (parent_dir, ef_path, scene_list) in enumerate(targets):
+    for i, (parent, ef_path, slist) in enumerate(targets):
         log_progress(i / total)
         norm_ef = os.path.normpath(ef_path)
-        gallery = existing.get(norm_ef)
+        parent_name = os.path.basename(parent)
+        gallery = existing_gals.get(norm_ef)
 
+        # If no folder gallery, check for images and create a virtual gallery
         if not gallery:
-            if dry_run:
-                log_info(f"[{i+1}/{total}] {ef_path}")
-                log_info(f"  [DRY RUN] Gallery would be created by scan.")
-                cover = find_cover_image(parent_dir)
-                if cover:
-                    log_info(f"  [DRY RUN] Would set cover from {cover}")
-                    results["cover_set"] += 1
-                for s in scene_list:
-                    log_info(f"  [DRY RUN] Would link to scene: {s.get('title') or s['id']}")
-                    results["linked"] += 1
+            imgs = gql.find_images_in_path(ef_path)
+            if not imgs:
+                log(f"  [{i+1}/{total}] {parent_name}: no images in Stash for {ef_path}")
+                log(f"    Ensure path is in library and run a Scan first.")
+                stats["skipped"] += 1
+                continue
+
+            # Check if images are already in a gallery
+            existing_gal_ids = set()
+            for img in imgs:
+                for g in img.get("galleries", []):
+                    existing_gal_ids.add(g["id"])
+            if existing_gal_ids:
+                # Images already belong to a gallery - use the first one
+                gal_id = list(existing_gal_ids)[0]
+                log(f"  [{i+1}/{total}] {parent_name}: images already in gallery #{gal_id}")
+                gallery = {"id": gal_id, "scenes": []}
             else:
-                log_info(f"  Skipping {ef_path} (gallery not yet created — waiting for scan)")
-                results["skipped"] += 1
-            continue
+                # Create new gallery and add images
+                title = f"{parent_name} - Extrafanart"
+                scene_ids = list({s["id"] for s in slist})
+                if dry_run:
+                    log(f"  [{i+1}/{total}] {parent_name}: [DRY] would create gallery with {len(imgs)} images")
+                    stats["created"] += 1
+                    continue
+                gal_id = gql.create_gallery(title, scene_ids)
+                if not gal_id:
+                    log_err(f"  [{i+1}/{total}] {parent_name}: failed to create gallery")
+                    stats["errors"] += 1
+                    continue
+                image_ids = [img["id"] for img in imgs]
+                gql.add_images(gal_id, image_ids)
+                log(f"  [{i+1}/{total}] {parent_name}: created gallery #{gal_id} ({len(imgs)} images)")
+                stats["created"] += 1
+                gallery = {"id": gal_id, "scenes": [{"id": s} for s in scene_ids]}
 
         gid = gallery["id"]
-        gtitle = gallery.get("title") or f"Gallery #{gid}"
-        log_info(f"[{i+1}/{total}] {gtitle}  ({ef_path})")
 
-        # ── Cover ──
-        cover_path = find_cover_image(parent_dir)
-        if cover_path:
-            if not dry_run:
+        # Set cover
+        cover = find_cover(parent)
+        if cover:
+            if dry_run:
+                log(f"  [{i+1}/{total}] {parent_name}: [DRY] would set cover from {os.path.basename(cover)}")
+            else:
                 try:
-                    b64 = image_to_base64(cover_path)
-                    if client.set_gallery_cover(gid, b64):
-                        log_info(f"  Cover set from {os.path.basename(cover_path)}")
-                        results["cover_set"] += 1
-                    else:
-                        log_error(f"  Failed to set cover (needs Stash v0.27+?).")
-                        results["errors"] += 1
-                except Exception as exc:
-                    log_error(f"  Exception setting cover: {exc}")
-                    results["errors"] += 1
-            else:
-                log_info(f"  [DRY RUN] Would set cover from {cover_path}")
-                results["cover_set"] += 1
+                    gql.set_cover(gid, img_b64(cover))
+                    log(f"  [{i+1}/{total}] {parent_name}: cover set ({os.path.basename(cover)})")
+                    stats["covers"] += 1
+                except Exception as e:
+                    log_err(f"  [{i+1}/{total}] {parent_name}: cover error: {e}")
+                    stats["errors"] += 1
         else:
-            log_info(f"  No cover image found in {parent_dir}")
-            results["skipped"] += 1
+            log(f"  [{i+1}/{total}] {parent_name}: no cover image found")
 
-        # ── Link to scenes ──
-        linked_scene_ids = {s["id"] for s in gallery.get("scenes", [])}
-        for scene in scene_list:
-            sid = scene["id"]
-            stitle = scene.get("title") or f"Scene #{sid}"
-            if sid in linked_scene_ids:
-                log_info(f"  Already linked to: {stitle}")
+        # Link to scenes
+        linked_sids = {s["id"] for s in gallery.get("scenes", [])}
+        for sc in slist:
+            sid = sc["id"]
+            if sid in linked_sids:
                 continue
-            if not dry_run:
-                existing_gids = [g["id"] for g in scene.get("galleries", [])]
-                if client.link_gallery_to_scene(sid, gid, existing_gids):
-                    log_info(f"  Linked to scene: {stitle}")
-                    results["linked"] += 1
-                else:
-                    log_error(f"  Failed to link to scene: {stitle}")
-                    results["errors"] += 1
+            if dry_run:
+                log(f"    [DRY] would link to scene {sc.get('title') or sid}")
             else:
-                log_info(f"  [DRY RUN] Would link to scene: {stitle}")
-                results["linked"] += 1
+                eg = [g["id"] for g in sc.get("galleries", [])]
+                gql.link_scene(sid, gid, eg)
+                log(f"    linked to scene: {sc.get('title') or sid}")
+                stats["linked"] += 1
 
     log_progress(1.0)
-    log_info("=" * 50)
-    log_info("Done!")
-    log_info(f"  Covers set      : {results['cover_set']}")
-    log_info(f"  Scenes linked   : {results['linked']}")
-    log_info(f"  Skipped (no cov): {results['skipped']}")
-    log_info(f"  Errors          : {results['errors']}")
+    log("=" * 40)
+    log(f"Done! Created={stats['created']} Covers={stats['covers']} "
+        f"Linked={stats['linked']} Skipped={stats['skipped']} Errors={stats['errors']}")
     if dry_run:
-        log_info("  (Dry run — no changes were made)")
+        log("(Dry run - no changes made)")
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
+# --- Entry ---
 def main():
     raw = sys.stdin.read()
     try:
-        plugin_input = json.loads(raw)
-    except (json.JSONDecodeError, ValueError):
-        plugin_input = {}
-
-    server = plugin_input.get("server_connection", {})
-    scheme = server.get("Scheme", "http")
-    host   = server.get("Host", "localhost")
+        pi = json.loads(raw)
+    except Exception:
+        pi = {}
+    srv = pi.get("server_connection", {})
+    scheme = srv.get("Scheme", "http")
+    host = srv.get("Host", "localhost")
     if host in ("0.0.0.0", ""):
         host = "localhost"
-    port    = server.get("Port", 9999)
-    api_key = server.get("ApiKey", "")
-
-    mode    = plugin_input.get("args", {}).get("mode", "link")
+    port = srv.get("Port", 9999)
+    api_key = srv.get("ApiKey", "")
+    mode = pi.get("args", {}).get("mode", "link")
     dry_run = mode == "dry_run"
-
-    if dry_run:
-        log_info("=== DRY RUN — no changes will be made ===")
-    else:
-        log_info("=== LIVE MODE — changes will be applied ===")
-
-    client = StashClient(scheme, host, port, api_key or None)
-    process(client, dry_run)
-
-    print(json.dumps({"output": "Plugin completed successfully."}))
-
+    log(f"Mode: {'DRY RUN' if dry_run else 'LIVE'}")
+    g = GQL(scheme, host, port, api_key or None)
+    process(g, dry_run)
+    print(json.dumps({"output": "ok"}))
 
 if __name__ == "__main__":
     main()
