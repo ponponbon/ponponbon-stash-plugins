@@ -50,3 +50,4 @@ settings:
     displayName: API Key
     description: Only required if authentication is enabled in Stash. Leave blank otherwise
     type: STRING
+    
