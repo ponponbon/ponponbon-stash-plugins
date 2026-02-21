@@ -82,7 +82,7 @@ def log_error(msg):
     sys.stderr.flush()
 
 def log_progress(pct):
-    # pct is 0.0 – 1.0
+    # pct is 0.0  E1.0
     print(f"\x05{pct:.2f}", file=sys.stderr)
     sys.stderr.flush()
 
@@ -298,14 +298,14 @@ def process_galleries(client, dry_run=False):
                     b64 = image_to_base64(cover_path)
                     ok = set_gallery_cover(client, gid, b64)
                     if ok:
-                        log_info(f"  ✓ Cover set successfully.")
+                        log_info(f"  ✁ECover set successfully.")
                         results["cover_set"] += 1
                     else:
-                        log_error(f"  ✗ Failed to set cover (mutation returned false). "
+                        log_error(f"  ✁EFailed to set cover (mutation returned false). "
                                   f"Your Stash may need v0.27+ for gallery cover support.")
                         results["errors"] += 1
                 except Exception as e:
-                    log_error(f"  ✗ Exception setting cover: {e}")
+                    log_error(f"  ✁EException setting cover: {e}")
                     results["errors"] += 1
             else:
                 log_info(f"  [DRY RUN] Would set cover from {cover_path}")
@@ -336,10 +336,10 @@ def process_galleries(client, dry_run=False):
                         continue
                     ok = link_gallery_to_scene(client, gid, sid, existing)
                     if ok:
-                        log_info(f"  ✓ Gallery linked to scene.")
+                        log_info(f"  ✁EGallery linked to scene.")
                         results["scene_linked"] += 1
                     else:
-                        log_error(f"  ✗ Failed to link gallery to scene.")
+                        log_error(f"  ✁EFailed to link gallery to scene.")
                         results["errors"] += 1
                 else:
                     log_info(f"  [DRY RUN] Would link gallery to scene #{sid}.")
@@ -353,11 +353,11 @@ def process_galleries(client, dry_run=False):
     log_info(f"  Skipped (no cover): {results['skipped']}")
     log_info(f"  Errors         : {results['errors']}")
     if dry_run:
-        log_info("  (Dry run — no changes were made)")
+        log_info("  (Dry run  Eno changes were made)")
 
 
 # ---------------------------------------------------------------------------
-# Entry point — Stash passes plugin input via stdin as JSON
+# Entry point  EStash passes plugin input via stdin as JSON
 # ---------------------------------------------------------------------------
 
 def main():
@@ -383,9 +383,9 @@ def main():
     dry_run = (mode == "dry_run")
 
     if dry_run:
-        log_info("Running in DRY RUN mode — no changes will be made.")
+        log_info("Running in DRY RUN mode  Eno changes will be made.")
     else:
-        log_info("Running in LIVE mode — changes will be applied.")
+        log_info("Running in LIVE mode  Echanges will be applied.")
 
     client = StashClient(scheme, host, port, api_key or None)
     process_galleries(client, dry_run=dry_run)
