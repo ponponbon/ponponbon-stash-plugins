@@ -189,12 +189,19 @@ def process(stash, dry_run=False):
 
     # Fetch all performers
     log("Fetching all performers from local Stash...")
-    performers = stash.find_performers(f={}, fragment="""
-        id
-        name
-        aliases
-        stash_ids { endpoint stash_id }
+    result = stash.call_GQL("""
+        query {
+            findPerformers(filter: { per_page: -1 }) {
+                performers {
+                    id
+                    name
+                    aliases
+                    stash_ids { endpoint stash_id }
+                }
+            }
+        }
     """)
+    performers = result.get('findPerformers', {}).get('performers', [])
     log(f"  {len(performers)} performer(s) found")
 
     # Filter to those with JavStash stash_ids
