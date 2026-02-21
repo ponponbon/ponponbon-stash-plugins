@@ -10,7 +10,7 @@
   name: extrafanart_gallery
   metadata:
     description: Scans scene directories for extrafanart subfolders, imports their images as galleries, sets the cover image, and links them to parent scenes
-  version: "1.5-5b49e3f"
-  date: "2026-02-21 18:33:56"
+  version: "1.6-bc41a5d"
+  date: "2026-02-21 18:41:38"
   path: extrafanart_gallery.zip
-  sha256: 3bbc84728fedc3f5bea9f194c7523f1ea02d5a86cd0b3d1bf43bc82c621c8508
+  sha256: aec49749b0f3ba9f80865ddefe60cdb5f5c50b97636b9587968b5a3ecd760d44

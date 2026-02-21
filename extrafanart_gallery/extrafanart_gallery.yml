@@ -1,6 +1,6 @@
 name: "Extrafanart Gallery Linker"
 description: Scans scene directories for extrafanart subfolders, imports their images as galleries, sets the cover image, and links them to parent scenes
-version: "1.5-5b49e3f"
+version: "1.6-bc41a5d"
 url: https://github.com/ponponbon/ponponbon-stash-plugins
 
 exec:
