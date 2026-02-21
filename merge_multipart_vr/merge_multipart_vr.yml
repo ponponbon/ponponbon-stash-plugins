@@ -1,6 +1,6 @@
 name: Merge Multipart VR Scenes
 description: Detects multi-part scenes (pt1/pt2, part-01/02, cd1/cd2, disc i/ii, A/B splits), merges them into a single Stash scene, and applies Multipart and VR tags.
-version: "1.01-b824d97"
+version: "1.02-9b75ec2"
 url: ""
 
 exec:
