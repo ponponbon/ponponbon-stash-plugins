@@ -2,7 +2,7 @@
   name: merge_multipart
   metadata:
     description: Merges multipart and VR videos
-  version: "1.03-8ef1e0d"
-  date: "2026-02-21 11:35:36"
+  version: "1.04-dd4f1bd"
+  date: "2026-02-21 11:41:18"
   path: merge_multipart.zip
-  sha256: ee57a57aa71f12caf0bb8ed2c69c7d49c123248a9355aecffcbe45019e671dc8
+  sha256: 6158521f005052706faedcaa78ca1ad166c074a5d8e618be297238d743cbffbd
