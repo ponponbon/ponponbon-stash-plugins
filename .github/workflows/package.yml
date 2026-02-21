@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'merge_multipart_vr/**'
+      - 'extrafanart_gallery/**'
 
 jobs:
   package:
@@ -20,14 +21,32 @@ jobs:
         id: hash
         run: echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
+      - name: Detect changed plugin
+        id: plugin
+        run: |
+          # Find which plugin folder was changed in this push
+          CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || git diff --name-only HEAD)
+          if echo "$CHANGED" | grep -q '^merge_multipart_vr/'; then
+            echo "folder=merge_multipart_vr" >> $GITHUB_OUTPUT
+            echo "id=merge_multipart" >> $GITHUB_OUTPUT
+            echo "zip=merge_multipart.zip" >> $GITHUB_OUTPUT
+            echo "yml=merge_multipart_vr/merge_multipart_vr.yml" >> $GITHUB_OUTPUT
+          elif echo "$CHANGED" | grep -q '^extrafanart_gallery/'; then
+            echo "folder=extrafanart_gallery" >> $GITHUB_OUTPUT
+            echo "id=extrafanart_gallery" >> $GITHUB_OUTPUT
+            echo "zip=extrafanart_gallery.zip" >> $GITHUB_OUTPUT
+            echo "yml=extrafanart_gallery/extrafanart_gallery.yml" >> $GITHUB_OUTPUT
+          else
+            echo "No recognised plugin folder changed, exiting."
+            exit 0
+          fi
+
       - name: Get and increment version
         id: version
         run: |
-          # Get current version and strip any existing hash suffix
-          CURRENT=$(grep '^version:' merge_multipart_vr/merge_multipart_vr.yml | sed 's/version: *//' | tr -d '"' | cut -d'-' -f1)
+          CURRENT=$(grep '^version:' "${{ steps.plugin.outputs.yml }}" | sed 's/version: *//' | tr -d '"' | cut -d'-' -f1)
           MAJOR=$(echo $CURRENT | cut -d'.' -f1)
           MINOR=$(echo $CURRENT | cut -d'.' -f2)
-          # Strip leading zeros before incrementing
           PADLEN=${#MINOR}
           MINOR=$((10#$MINOR + 1))
           NEW_MINOR=$(printf "%0${PADLEN}d" $MINOR)
@@ -36,38 +55,78 @@ jobs:
 
       - name: Zip plugin
         run: |
-          cd merge_multipart_vr
-          zip -r ../merge_multipart.zip ./*
+          cd "${{ steps.plugin.outputs.folder }}"
+          zip -r "../${{ steps.plugin.outputs.zip }}" ./*
 
       - name: Generate SHA256
         id: sha256
-        run: echo "hash=$(sha256sum merge_multipart.zip | awk '{print $1}')" >> $GITHUB_OUTPUT
+        run: echo "hash=$(sha256sum ${{ steps.plugin.outputs.zip }} | awk '{print $1}')" >> $GITHUB_OUTPUT
 
       - name: Update index.yml
         run: |
           VERSION="${{ steps.version.outputs.version }}-${{ steps.hash.outputs.sha }}"
           DATE=$(date -u '+%Y-%m-%d %H:%M:%S')
-          cat > index.yml << INDEXEOF
-          - id: merge_multipart
-            name: merge_multipart
-            metadata:
-              description: Merges multipart and VR videos
-            version: "${VERSION}"
-            date: "${DATE}"
-            path: merge_multipart.zip
-            sha256: ${{ steps.sha256.outputs.hash }}
-          INDEXEOF
+          PLUGIN_ID="${{ steps.plugin.outputs.id }}"
+          ZIP="${{ steps.plugin.outputs.zip }}"
+          SHA="${{ steps.sha256.outputs.hash }}"
+
+          python3 - <<PYEOF
+          import re
+
+          plugin_id = "$PLUGIN_ID"
+          version   = "$VERSION"
+          date      = "$DATE"
+          zip_path  = "$ZIP"
+          sha256    = "$SHA"
+
+          descriptions = {
+              "merge_multipart":    "Merges multipart and VR videos",
+              "extrafanart_gallery": "Links extrafanart folders to their parent scene and sets folder.jpg as gallery cover",
+          }
+          names = {
+              "merge_multipart":    "merge_multipart",
+              "extrafanart_gallery": "extrafanart_gallery",
+          }
+
+          new_block = (
+              f"- id: {plugin_id}\n"
+              f"  name: {names[plugin_id]}\n"
+              f"  metadata:\n"
+              f"    description: {descriptions[plugin_id]}\n"
+              f'  version: "{version}"\n'
+              f'  date: "{date}"\n'
+              f"  path: {zip_path}\n"
+              f"  sha256: {sha256}"
+          )
+
+          try:
+              with open('index.yml', 'r') as f:
+                  content = f.read()
+          except FileNotFoundError:
+              content = ""
+
+          # Replace existing block for this plugin id, or append if not present
+          pattern = rf'- id: {re.escape(plugin_id)}\b.*?(?=\n- id:|\Z)'
+          if re.search(pattern, content, flags=re.DOTALL):
+              updated = re.sub(pattern, new_block, content, flags=re.DOTALL)
+          else:
+              updated = content.rstrip('\n') + ('\n\n' if content.strip() else '') + new_block + '\n'
+
+          with open('index.yml', 'w') as f:
+              f.write(updated)
+
+          print(f"Updated index.yml for {plugin_id} -> {version}")
+          PYEOF
 
       - name: Update version in plugin yml
         run: |
           VERSION="${{ steps.version.outputs.version }}-${{ steps.hash.outputs.sha }}"
-          sed -i "s/^version:.*/version: \"${VERSION}\"/" merge_multipart_vr/merge_multipart_vr.yml
+          sed -i "s/^version:.*/version: \"${VERSION}\"/" "${{ steps.plugin.outputs.yml }}"
 
       - name: Commit and push
         run: |
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
-          git add merge_multipart.zip index.yml merge_multipart_vr/merge_multipart_vr.yml
-          # Always commit — force a version bump even if only metadata changed
+          git add "${{ steps.plugin.outputs.zip }}" index.yml "${{ steps.plugin.outputs.yml }}"
           git commit -m "ci: auto-package v${{ steps.version.outputs.version }}-${{ steps.hash.outputs.sha }}" || echo "Nothing to commit"
           git push

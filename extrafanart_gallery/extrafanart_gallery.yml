@@ -1,0 +1,25 @@
+name: "Extrafanart Gallery Linker"
+description: Links extrafanart folders to their parent scene and sets folder.jpg as gallery cover
+version: "1.0.0"
+url: https://github.com/ponponbon/ponponbon-stash-plugins
+
+exec:
+  - python
+  - extrafanart_gallery.py
+
+interface: raw
+
+tasks:
+  - name: "Link Extrafanart Galleries"
+    description: >
+      Scans all galleries whose path contains 'extrafanart', sets the
+      parent folder's cover image as the gallery cover, and links the
+      gallery to any scene found in the same parent folder.
+    defaultArgs:
+      mode: "link"
+
+  - name: "Dry Run (Preview Only)"
+    description: >
+      Preview what would be changed without making any modifications.
+    defaultArgs:
+      mode: "dry_run"
