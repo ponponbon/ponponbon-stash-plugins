@@ -1,10 +1,10 @@
 name: Merge Multipart VR Scenes
 description: Detects multi-part scenes (pt1/pt2, part-01/02, cd1/cd2, disc i/ii, A/B splits), merges them into a single Stash scene, and applies Multipart and VR tags.
 <<<<<<< HEAD
-version: "1.00050001-602c735"
+version: "1.00000204810000000001-3e7aba2"
 url: "https://github.com/ponponbon/ponponbon-stash-plugins"
 =======
-version: "1.00050001-602c735"
+version: "1.00000204810000000001-3e7aba2"
 url: ""
 >>>>>>> f1364edb74c5325a684bd6c83b54c2feed724e90
 
