@@ -1,4 +1,4 @@
-name: Package Plugin
+name: package-plugin
 
 on:
   push:
