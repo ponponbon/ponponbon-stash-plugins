@@ -16,7 +16,7 @@ tasks:
       mode: preview
 
   - name: Merge Multipart Scenes
-    description: Find and merge multipart/VR scenes
+    description: Find and merge Multipart/VR scenes
     defaultArgs:
       mode: merge
 
@@ -50,4 +50,3 @@ settings:
     displayName: API Key
     description: Only required if authentication is enabled in Stash. Leave blank otherwise
     type: STRING
-    
