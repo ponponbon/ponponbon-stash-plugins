@@ -10,7 +10,7 @@
   name: extrafanart_gallery
   metadata:
     description: Links extrafanart folders to their parent scene and sets folder.jpg as gallery cover
-  version: "1.1-6d2fd2c"
-  date: "2026-02-21 17:39:24"
+  version: "1.2-4b05187"
+  date: "2026-02-21 18:03:25"
   path: extrafanart_gallery.zip
-  sha256: f850b09c0673e9f0829ff6a0db99c08ba2521a9a8878f5d8bc1829f0c1ffd3ee
+  sha256: e76508654f64dcd9b3d8d05729890f6fbcd2efcbf9d52f52aa2dea9436a25784
