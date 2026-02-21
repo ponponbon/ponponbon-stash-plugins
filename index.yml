@@ -14,3 +14,11 @@
   date: "2026-02-21 18:49:42"
   path: extrafanart_gallery.zip
   sha256: 9d2d4943dd786ffec69fbf1b5757351aafd61ee21f21b6db15086baa821a78f8
+- id: performer_name_sync
+  name: performer_name_sync
+  metadata:
+    description: Cross-references JavStash and StashDB stash-box endpoints to update performer names from Japanese to English
+  version: "1.0"
+  date: "2026-02-21 19:49:00"
+  path: performer_name_sync.zip
+  sha256: 498c063d109dbd8c9e175cedc6f3499c1885b55ca235fe59e220c51254a65e41
