@@ -10,7 +10,7 @@ sha256    = os.environ["SHA"]
 
 descriptions = {
     "merge_multipart":     "Merges multipart and VR videos",
-    "extrafanart_gallery": "Links extrafanart folders to their parent scene and sets folder.jpg as gallery cover",
+    "extrafanart_gallery": "Scans scene directories for extrafanart subfolders, imports their images as galleries, sets the cover image, and links them to parent scenes",
 }
 names = {
     "merge_multipart":     "merge_multipart",
