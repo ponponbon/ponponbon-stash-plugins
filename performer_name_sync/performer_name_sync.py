@@ -196,7 +196,7 @@ def process(stash, dry_run=False):
                 performers {
                     id
                     name
-                    aliases
+                    alias_list
                     stash_ids { endpoint stash_id }
                 }
             }
@@ -226,7 +226,7 @@ def process(stash, dry_run=False):
         log_progress(i / max(total, 1))
         p_id = performer['id']
         current_name = performer.get('name', '')
-        current_aliases = performer.get('aliases') or []
+        current_aliases = performer.get('alias_list') or []
 
         # Skip if already Latin
         if is_latin(current_name):
@@ -310,7 +310,7 @@ def process(stash, dry_run=False):
             stash.update_performer({
                 'id': p_id,
                 'name': new_name,
-                'aliases': updated_aliases,
+                'alias_list': updated_aliases,
             })
             stats['updated'] += 1
         except Exception as e:
