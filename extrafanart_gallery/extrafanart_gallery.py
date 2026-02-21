@@ -21,6 +21,10 @@ COVER_CANDIDATES = [
     "cover.jpg",  "cover.jpeg",  "cover.png",  "cover.webp",
     "board.jpg",  "board.jpeg",  "board.png",  "board.webp",
 ]
+# Extra images in the parent dir to add to the gallery (cover + fanart)
+PARENT_IMAGE_CANDIDATES = COVER_CANDIDATES + [
+    "fanart.jpg", "fanart.jpeg", "fanart.png", "fanart.webp",
+]
 FANART_FOLDER = "extrafanart"
 
 # --- Logging (Stash raw plugin protocol on stderr) ---
@@ -118,6 +122,11 @@ class GQL:
                     return img["id"]
         return None
 
+    def update_gallery_title(self, gallery_id, title):
+        self.q("""mutation($i:GalleryUpdateInput!){
+            galleryUpdate(input:$i){id}}""",
+            {"i":{"id":gallery_id,"title":title}})
+
     def link_scene(self, scene_id, gallery_id, existing_gids):
         all_ids = list(set(existing_gids + [gallery_id]))
         self.q("""mutation($i:SceneUpdateInput!){
@@ -125,15 +134,23 @@ class GQL:
             {"i":{"id":scene_id,"gallery_ids":all_ids}})
 
 # --- Helpers ---
-def find_cover(d):
+def find_parent_images(d):
+    """Return list of full paths for cover/fanart images in directory."""
     try:
         entries = {e.lower(): e for e in os.listdir(d)}
     except OSError:
-        return None
-    for c in COVER_CANDIDATES:
-        if c in entries:
-            return os.path.join(d, entries[c])
-    return None
+        return []
+    found = []
+    seen = set()
+    for c in PARENT_IMAGE_CANDIDATES:
+        if c in entries and c not in seen:
+            found.append(os.path.join(d, entries[c]))
+            seen.add(c)
+    return found
+
+def gallery_title_from_dir(parent_name):
+    """Extract code/ID from directory name. 'SNOS-094 - (2026-02-09)' -> 'SNOS-094'"""
+    return parent_name.split(" - ")[0].strip()
 
 
 # --- Core ---
@@ -197,13 +214,13 @@ def process(gql, dry_run=False):
                 gallery = {"id": gal_id, "scenes": []}
             else:
                 # Create new gallery and add images
-                scene_title = slist[0].get("title") or parent_name
+                title = gallery_title_from_dir(parent_name)
                 scene_ids = list({s["id"] for s in slist})
                 if dry_run:
-                    log(f"  [{i+1}/{total}] {parent_name}: [DRY] would create gallery with {len(imgs)} images")
+                    log(f"  [{i+1}/{total}] {parent_name}: [DRY] would create '{title}' with {len(imgs)} images")
                     stats["created"] += 1
                     continue
-                gal_id = gql.create_gallery(scene_title, scene_ids)
+                gal_id = gql.create_gallery(title, scene_ids)
                 if not gal_id:
                     log_err(f"  [{i+1}/{total}] {parent_name}: failed to create gallery")
                     stats["errors"] += 1
@@ -216,22 +233,37 @@ def process(gql, dry_run=False):
 
         gid = gallery["id"]
 
-        # Set cover: find cover image (folder.jpg etc) in Stash, add to gallery
-        cover_path = find_cover(parent)
-        if cover_path:
+        # Sync gallery title
+        expected_title = gallery_title_from_dir(parent_name)
+        cur_title = gallery.get("title", "")
+        if cur_title != expected_title and not dry_run:
+            gql.update_gallery_title(gid, expected_title)
+            log(f"  [{i+1}/{total}] {parent_name}: title updated -> '{expected_title}'")
+
+        # Add parent images (folder.jpg, fanart.jpg, etc) to gallery
+        parent_imgs = find_parent_images(parent)
+        if parent_imgs:
+            added_names = []
+            ids_to_add = []
+            for pimg in parent_imgs:
+                if dry_run:
+                    added_names.append(os.path.basename(pimg))
+                    continue
+                img_id = gql.find_image_by_path(pimg)
+                if img_id:
+                    ids_to_add.append(img_id)
+                    added_names.append(os.path.basename(pimg))
             if dry_run:
-                log(f"  [{i+1}/{total}] {parent_name}: [DRY] would set cover from {os.path.basename(cover_path)}")
+                log(f"  [{i+1}/{total}] {parent_name}: [DRY] would add {', '.join(added_names)}")
+                stats["covers"] += 1
+            elif ids_to_add:
+                gql.add_images(gid, ids_to_add)
+                log(f"  [{i+1}/{total}] {parent_name}: added {', '.join(added_names)}")
                 stats["covers"] += 1
             else:
-                cover_id = gql.find_image_by_path(cover_path)
-                if cover_id:
-                    gql.add_images(gid, [cover_id])
-                    log(f"  [{i+1}/{total}] {parent_name}: cover added ({os.path.basename(cover_path)})")
-                    stats["covers"] += 1
-                else:
-                    log(f"  [{i+1}/{total}] {parent_name}: cover {os.path.basename(cover_path)} not in Stash (run Scan)")
+                log(f"  [{i+1}/{total}] {parent_name}: parent images not in Stash (run Scan)")
         else:
-            log(f"  [{i+1}/{total}] {parent_name}: no cover image found in parent dir")
+            log(f"  [{i+1}/{total}] {parent_name}: no parent images found")
 
         # Link to scenes
         linked_sids = {s["id"] for s in gallery.get("scenes", [])}
