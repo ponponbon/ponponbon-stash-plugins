@@ -1,0 +1,63 @@
+name: Package Plugin
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'merge_multipart_vr/**'
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get short hash
+        id: hash
+        run: echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Get version from yml
+        id: version
+        run: |
+          VERSION=$(grep '^version:' merge_multipart_vr/merge_multipart_vr.yml | sed 's/version: *//' | tr -d '"' | cut -d'-' -f1)
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Zip plugin
+        run: |
+          cd merge_multipart_vr
+          zip -r ../merge_multipart.zip ./*
+
+      - name: Generate SHA256
+        id: sha256
+        run: echo "hash=$(sha256sum merge_multipart.zip | awk '{print $1}')" >> $GITHUB_OUTPUT
+
+      - name: Update index.yml
+        run: |
+          VERSION="${{ steps.version.outputs.version }}-${{ steps.hash.outputs.sha }}"
+          DATE=$(date -u '+%Y-%m-%d %H:%M:%S')
+          cat > index.yml << EOF
+          - id: merge_multipart
+            name: merge_multipart
+            metadata:
+              description: Merges multipart and VR videos
+            version: "${VERSION}"
+            date: "${DATE}"
+            path: merge_multipart.zip
+            sha256: ${{ steps.sha256.outputs.hash }}
+          EOF
+
+      - name: Update version in plugin yml
+        run: |
+          VERSION="${{ steps.version.outputs.version }}-${{ steps.hash.outputs.sha }}"
+          sed -i "s/^version:.*/version: \"${VERSION}\"/" merge_multipart_vr/merge_multipart_vr.yml
+
+      - name: Commit and push
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add merge_multipart.zip index.yml merge_multipart_vr/merge_multipart_vr.yml
+          git diff --staged --quiet || git commit -m "ci: auto-package v${{ steps.version.outputs.version }}-${{ steps.hash.outputs.sha }}"
+          git push
