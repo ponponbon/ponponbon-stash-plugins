@@ -4,8 +4,8 @@ version: "1.1-6d2fd2c"
 url: https://github.com/ponponbon/ponponbon-stash-plugins
 
 exec:
-  - python
-  - extrafanart_gallery.py
+  - python3
+  - "{pluginDir}/extrafanart_gallery.py"
 
 interface: raw
 
