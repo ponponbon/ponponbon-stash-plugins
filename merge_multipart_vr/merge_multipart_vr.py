@@ -95,6 +95,11 @@ def log_info(message: str):
     print(message, flush=True)
     LOG_MESSAGES.append(message)
 
+def log_section(title: str):
+    log_info(f"\n{'─' * 50}")
+    log_info(f"  {title}")
+    log_info('─' * 50)
+
 
 # ---------------------------------------------------------------------------
 # HTTP session
@@ -289,26 +294,29 @@ def clean_title(title: str) -> str:
     cleaned = re.sub(r"[ _.\-]{2,}", " ", cleaned).strip(" _.-")
     return cleaned if cleaned else title
 
+
 # ---------------------------------------------------------------------------
 # Main logic
 # ---------------------------------------------------------------------------
 
 def main():
-    log_info("== Merge Multipart VR Scenes ==")
-    log_info(f"Endpoint : {STASH_URL}  (source: {URL_SOURCE})")
-    log_info(f"DRY_RUN  : {DRY_RUN}")
-    log_info(f"VR_ONLY  : {VR_ONLY}")
+    log_section("Merge Multipart VR Scenes")
+    log_info(f"  Endpoint : {STASH_URL}  (source: {URL_SOURCE})")
+    log_info(f"  Mode     : {'DRY RUN — no changes will be made' if DRY_RUN else 'LIVE — changes will be applied'}")
+    log_info(f"  VR Only  : {VR_ONLY}")
 
     ok, msg = test_connection()
     if not ok:
         output_result(error=f"Cannot reach Stash GraphQL: {msg}")
         sys.exit(2)
-    log_info(f"Connected: {msg}\n")
+    log_info(f"  Stash    : {msg}")
 
     vr_tag_id = get_or_create_tag(VR_TAG_NAME) if VR_TAG_NAME else None
     mp_tag_id = get_or_create_tag(MULTIPART_TAG_NAME)
+    log_info(f"  Tags     : '{MULTIPART_TAG_NAME}' + '{VR_TAG_NAME}'")
 
     # ---- Paginate all scenes ------------------------------------------------
+    log_section("Scanning Library")
     page, per_page = 1, 200
     total, scenes = fetch_scenes_page(page, per_page)
     pages = max(1, math.ceil(total / per_page))
@@ -317,13 +325,12 @@ def main():
         page += 1
         _, scenes = fetch_scenes_page(page, per_page)
         all_scenes.extend(scenes)
-    log_info(f"Fetched {len(all_scenes)} scenes (total reported: {total})")
+    log_info(f"  Found {len(all_scenes)} scenes")
 
     # ---- Group by (directory, normalised base) ------------------------------
     groups: Dict[Tuple[str, str], List[Dict]] = {}
 
     for sc in all_scenes:
-        # Optionally restrict to VR-tagged scenes only
         if VR_ONLY and vr_tag_id:
             if not any(t["id"] == vr_tag_id for t in sc["tags"]):
                 continue
@@ -336,12 +343,16 @@ def main():
         base, part = normalize_basename(f["basename"])
 
         if part is None:
-            continue  # not a recognised multipart file
+            continue
 
         key = (dirpath, base.lower())
         groups.setdefault(key, []).append({"scene": sc, "part": part, "basename": f["basename"]})
 
+    multipart_groups = {k: v for k, v in groups.items() if len(v) >= 2}
+    log_info(f"  Detected {len(multipart_groups)} multipart group(s)")
+
     # ---- Plan and execute merges --------------------------------------------
+    log_section("Processing Groups")
     merged_count = 0
     skipped_count = 0
     merge_summary = []
@@ -351,40 +362,40 @@ def main():
             continue
 
         dirpath, base = key
-
-        # Detect duplicate part numbers within the same group
         part_nums = [it["part"] for it in items]
+
         if len(part_nums) != len(set(part_nums)):
-            log_info(f"\n⚠  SKIPPING — duplicate part numbers in group: {dirpath} :: {base}")
-            log_info(f"   Parts found: {part_nums}")
+            log_info(f"  ⚠  SKIP  {base}")
+            log_info(f"         Duplicate part numbers detected: {part_nums}")
             skipped_count += 1
             continue
 
         items.sort(key=lambda x: x["part"])
         scene_ids = [it["scene"]["id"] for it in items]
-
-        log_info(f"\nGroup : {dirpath} :: {base}")
-        log_info(f"Parts : {part_nums}  →  scene IDs {scene_ids}")
-
         target = items[0]["scene"]
         sources = [it["scene"]["id"] for it in items[1:]]
 
-        # Merge sources into target
+        log_info(f"\n  ✂  Merging  [{' + '.join(str(p) for p in part_nums)}]  {base}")
+        log_info(f"     Folder  : {dirpath}")
+        log_info(f"     Target  : {target['id']}  ({target['title'] or 'untitled'})")
+        log_info(f"     Sources : {sources}")
+
         scene_merge(target["id"], sources)
         merged_count += 1
 
-        # Build new tag set
         tag_ids = {t["id"] for t in target["tags"]}
         tag_ids.add(mp_tag_id)
         if vr_tag_id:
             tag_ids.add(vr_tag_id)
         scene_update_tags(target["id"], list(tag_ids))
+        log_info(f"     Tags    : applied '{MULTIPART_TAG_NAME}'" + (f" + '{VR_TAG_NAME}'" if vr_tag_id else ""))
 
-        # Clean title
         new_title = clean_title(target["title"] or "")
         if new_title and new_title != target["title"]:
-            log_info(f"  Title: {target['title']!r}  →  {new_title!r}")
+            log_info(f"     Title   : {target['title']!r}  →  {new_title!r}")
             scene_update_title(target["id"], new_title)
+        else:
+            log_info(f"     Title   : no change")
 
         merge_summary.append({
             "group": f"{dirpath} :: {base}",
@@ -397,12 +408,11 @@ def main():
             time.sleep(MERGE_DELAY_S)
 
     # ---- Summary ------------------------------------------------------------
-    result_message = (
-        f"Done.  Groups merged: {merged_count}  |  Skipped (conflicts): {skipped_count}"
-    )
-    log_info(f"\n{result_message}")
+    log_section("Summary")
+    result_message = f"Merged: {merged_count}  |  Skipped: {skipped_count}"
+    log_info(f"  {result_message}")
     if DRY_RUN:
-        log_info("DRY_RUN was ON — no changes were written.  Use 'merge' mode to apply.")
+        log_info("  DRY RUN — no changes were written. Run 'Merge Multipart Scenes' to apply.")
 
     output_result(output={
         "message": result_message,
