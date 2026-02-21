@@ -38,7 +38,7 @@ settings:
 
   d_merge_delay:
     displayName: Delay Between Merges (ms)
-    description: Milliseconds to wait between merge operations. Increase if you experience timeouts. Leave blank for default of 200ms
+    description: Time to wait between merge operations. Increase if you experience timeouts. Leave blank for default of 200ms
     type: NUMBER
 
   e_stash_url:
