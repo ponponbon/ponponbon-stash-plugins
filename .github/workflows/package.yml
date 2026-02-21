@@ -19,10 +19,19 @@ jobs:
         id: hash
         run: echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
-      - name: Get version from yml
+      - name: Get and increment version
         id: version
         run: |
-          VERSION=$(grep '^version:' merge_multipart_vr/merge_multipart_vr.yml | sed 's/version: *//' | tr -d '"' | cut -d'-' -f1)
+          # Get current version (strip git hash if present)
+          CURRENT=$(grep '^version:' merge_multipart_vr/merge_multipart_vr.yml | sed 's/version: *//' | tr -d '"' | cut -d'-' -f1)
+          # Split into major and minor (e.g. 1.02 -> 1 and 02)
+          MAJOR=$(echo $CURRENT | cut -d'.' -f1)
+          MINOR=$(echo $CURRENT | cut -d'.' -f2)
+          # Increment minor, preserving leading zero padding
+          PADLEN=${#MINOR}
+          MINOR=$((10#$MINOR + 1))
+          NEW_MINOR=$(printf "%0${PADLEN}d" $MINOR)
+          VERSION="${MAJOR}.${NEW_MINOR}"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
 
       - name: Zip plugin
@@ -38,7 +47,7 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.version }}-${{ steps.hash.outputs.sha }}"
           DATE=$(date -u '+%Y-%m-%d %H:%M:%S')
-          cat > index.yml << EOF
+          cat > index.yml << INDEXEOF
           - id: merge_multipart
             name: merge_multipart
             metadata:
@@ -47,7 +56,7 @@ jobs:
             date: "${DATE}"
             path: merge_multipart.zip
             sha256: ${{ steps.sha256.outputs.hash }}
-          EOF
+          INDEXEOF
 
       - name: Update version in plugin yml
         run: |
