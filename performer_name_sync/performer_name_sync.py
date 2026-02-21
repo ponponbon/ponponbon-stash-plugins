@@ -343,19 +343,26 @@ def main():
 
     # Connect via stashapp-tools
     try:
-        import stashapi.log as slog
         from stashapi.stashapp import StashInterface
     except ImportError:
         log_err("stashapp-tools is not installed. Run: pip install stashapp-tools")
         print(json.dumps({'output': 'error'}))
         sys.exit(1)
 
+    # StashInterface expects a logging.Logger-compatible object
+    import logging
+    logger = logging.getLogger("performer_name_sync")
+    logger.setLevel(logging.DEBUG)
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setLevel(logging.DEBUG)
+    logger.addHandler(handler)
+
     stash = StashInterface({
         'scheme': scheme,
         'host': host,
         'port': port,
         'ApiKey': api_key,
-        'logger': log,
+        'logger': logger,
     })
 
     process(stash, dry_run)

@@ -91,9 +91,22 @@ MERGE_DELAY_S = float(get_plugin_setting(plugin_input, "f_merge_delay", "200")) 
 LOG_MESSAGES: List[str] = []
 
 
+# Stash raw-plugin log-level prefixes (written to stderr)
+# \x01=trace  \x02=debug  \x03=info  \x04=warning  \x05=error  \x06=progress
 def log_info(message: str):
-    print(message, flush=True)
+    print(f"\x03{message}", file=sys.stderr, flush=True)
     LOG_MESSAGES.append(message)
+
+def log_warn(message: str):
+    print(f"\x04{message}", file=sys.stderr, flush=True)
+    LOG_MESSAGES.append(message)
+
+def log_err(message: str):
+    print(f"\x05{message}", file=sys.stderr, flush=True)
+    LOG_MESSAGES.append(message)
+
+def log_progress(pct: float):
+    print(f"\x06{pct:.2f}", file=sys.stderr, flush=True)
 
 def log_section(title: str):
     log_info(f"\n{'─' * 50}")
@@ -365,8 +378,8 @@ def main():
         part_nums = [it["part"] for it in items]
 
         if len(part_nums) != len(set(part_nums)):
-            log_info(f"  ⚠  SKIP  {base}")
-            log_info(f"         Duplicate part numbers detected: {part_nums}")
+            log_warn(f"  ⚠  SKIP  {base}")
+            log_warn(f"         Duplicate part numbers detected: {part_nums}")
             skipped_count += 1
             continue
 
@@ -429,11 +442,11 @@ if __name__ == "__main__":
         main()
     except requests.HTTPError as e:
         msg = f"HTTP error: {e}"
-        print(msg, file=sys.stderr)
+        log_err(msg)
         output_result(error=msg)
         sys.exit(2)
     except Exception as e:
         msg = f"Unexpected error: {e}"
-        print(msg, file=sys.stderr)
+        log_err(msg)
         output_result(error=msg)
         sys.exit(1)

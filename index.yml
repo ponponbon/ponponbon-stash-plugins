@@ -5,7 +5,7 @@
   version: "1.2-f62ff3c"
   date: "2026-02-21 17:28:00"
   path: merge_multipart.zip
-  sha256: 27acd7455e958adfe42b324afa965c9d0ad8b9a03f45232b028a846bbb57aecd
+  sha256: 96b7a72f75c825e8b1b1350edbe23e7af4527cbbf41b39a01109970f7949628a
 - id: extrafanart_gallery
   name: extrafanart_gallery
   metadata:
@@ -13,7 +13,7 @@
   version: "1.7-b75672b"
   date: "2026-02-21 18:49:42"
   path: extrafanart_gallery.zip
-  sha256: 9d2d4943dd786ffec69fbf1b5757351aafd61ee21f21b6db15086baa821a78f8
+  sha256: 9da5ea151c68f43096d2d66d955b3671547cf6915669333bc7590cb4652322bd
 - id: performer_name_sync
   name: performer_name_sync
   metadata:
@@ -21,4 +21,4 @@
   version: "1.0"
   date: "2026-02-21 19:49:00"
   path: performer_name_sync.zip
-  sha256: 498c063d109dbd8c9e175cedc6f3499c1885b55ca235fe59e220c51254a65e41
+  sha256: 37d3a80f796c0d735dccc59e3d0a2ef8a61780d3ffe0a46cbeacd577efbddade
