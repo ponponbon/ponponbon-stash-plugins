@@ -32,7 +32,7 @@ def normalize_graphql_url(url: str) -> str:
 
 def get_stash_url(plugin_input, server_connection):
     args = plugin_input.get("args", {})
-    if args.get("d_stash_url"):
+    if args.get("e_stash_url"):
         return normalize_graphql_url(args["stash_url"]), "plugin arg"
     env_url = os.environ.get("STASH_URL")
     if env_url:
@@ -73,7 +73,7 @@ server_connection = plugin_input.get("server_connection", {})
 args = plugin_input.get("args", {})
 
 STASH_URL, URL_SOURCE = get_stash_url(plugin_input, server_connection)
-API_KEY = get_plugin_setting(plugin_input, "e_api_key", os.environ.get("STASH_API_KEY", ""))
+API_KEY = get_plugin_setting(plugin_input, "f_api_key", os.environ.get("STASH_API_KEY", ""))
 VR_TAG_NAME = get_plugin_setting(plugin_input, "a_vr_tag", "VR")
 MULTIPART_TAG_NAME = get_plugin_setting(plugin_input, "b_multipart_tag", "Multipart")
 
