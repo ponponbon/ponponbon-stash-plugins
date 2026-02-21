@@ -8,7 +8,7 @@ scene files in the same parent directory.
 
 Install:  pip install requests
 """
-import sys, json, os, base64
+import sys, json, os
 try:
     import requests
 except ImportError:
@@ -104,10 +104,19 @@ class GQL:
             addGalleryImages(input:$i)}""",
             {"i":{"gallery_id":gallery_id,"image_ids":image_ids}})
 
-    def set_cover(self, gallery_id, b64):
-        self.q("""mutation($i:GalleryUpdateInput!){
-            galleryUpdate(input:$i){id}}""",
-            {"i":{"id":gallery_id,"cover_image":b64}})
+    def find_image_by_path(self, file_path):
+        """Find a single image in Stash by exact file path."""
+        d = self.q("""query($f:FindFilterType,$if:ImageFilterType){
+            findImages(filter:$f,image_filter:$if){images{id
+            files{path}}}}""",
+            {"f":{"per_page":5},"if":{"path":{"value":file_path,"modifier":"EQUALS"}}})
+        imgs = d.get("findImages",{}).get("images",[])
+        norm = os.path.normpath(file_path)
+        for img in imgs:
+            for f in img.get("files",[]):
+                if os.path.normpath(f.get("path","")) == norm:
+                    return img["id"]
+        return None
 
     def link_scene(self, scene_id, gallery_id, existing_gids):
         all_ids = list(set(existing_gids + [gallery_id]))
@@ -126,11 +135,6 @@ def find_cover(d):
             return os.path.join(d, entries[c])
     return None
 
-def img_b64(path):
-    ext = os.path.splitext(path)[1].lower().lstrip(".")
-    mime = {"jpg":"jpeg","jpeg":"jpeg","png":"png","webp":"webp"}.get(ext,"jpeg")
-    with open(path,"rb") as f:
-        return f"data:image/{mime};base64,{base64.b64encode(f.read()).decode()}"
 
 # --- Core ---
 def process(gql, dry_run=False):
@@ -193,13 +197,13 @@ def process(gql, dry_run=False):
                 gallery = {"id": gal_id, "scenes": []}
             else:
                 # Create new gallery and add images
-                title = f"{parent_name} - Extrafanart"
+                scene_title = slist[0].get("title") or parent_name
                 scene_ids = list({s["id"] for s in slist})
                 if dry_run:
                     log(f"  [{i+1}/{total}] {parent_name}: [DRY] would create gallery with {len(imgs)} images")
                     stats["created"] += 1
                     continue
-                gal_id = gql.create_gallery(title, scene_ids)
+                gal_id = gql.create_gallery(scene_title, scene_ids)
                 if not gal_id:
                     log_err(f"  [{i+1}/{total}] {parent_name}: failed to create gallery")
                     stats["errors"] += 1
@@ -212,21 +216,22 @@ def process(gql, dry_run=False):
 
         gid = gallery["id"]
 
-        # Set cover
-        cover = find_cover(parent)
-        if cover:
+        # Set cover: find cover image (folder.jpg etc) in Stash, add to gallery
+        cover_path = find_cover(parent)
+        if cover_path:
             if dry_run:
-                log(f"  [{i+1}/{total}] {parent_name}: [DRY] would set cover from {os.path.basename(cover)}")
+                log(f"  [{i+1}/{total}] {parent_name}: [DRY] would set cover from {os.path.basename(cover_path)}")
+                stats["covers"] += 1
             else:
-                try:
-                    gql.set_cover(gid, img_b64(cover))
-                    log(f"  [{i+1}/{total}] {parent_name}: cover set ({os.path.basename(cover)})")
+                cover_id = gql.find_image_by_path(cover_path)
+                if cover_id:
+                    gql.add_images(gid, [cover_id])
+                    log(f"  [{i+1}/{total}] {parent_name}: cover added ({os.path.basename(cover_path)})")
                     stats["covers"] += 1
-                except Exception as e:
-                    log_err(f"  [{i+1}/{total}] {parent_name}: cover error: {e}")
-                    stats["errors"] += 1
+                else:
+                    log(f"  [{i+1}/{total}] {parent_name}: cover {os.path.basename(cover_path)} not in Stash (run Scan)")
         else:
-            log(f"  [{i+1}/{total}] {parent_name}: no cover image found")
+            log(f"  [{i+1}/{total}] {parent_name}: no cover image found in parent dir")
 
         # Link to scenes
         linked_sids = {s["id"] for s in gallery.get("scenes", [])}
