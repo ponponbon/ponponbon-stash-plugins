@@ -1,0 +1,52 @@
+name: Merge Multipart VR Scenes
+description: Detects multi-part scenes (pt1/pt2, part-01/02, cd1/cd2, disc i/ii, A/B splits), merges them into a single Stash scene, and applies Multipart and VR tags.
+version: "1.01-b824d97"
+url: ""
+
+exec:
+  - python3
+  - "{pluginDir}/merge_multipart_vr.py"
+
+interface: raw
+
+tasks:
+  - name: Preview (dry run)
+    description: Show what would be merged without making any changes
+    defaultArgs:
+      mode: preview
+
+  - name: Merge Multipart Scenes
+    description: Find and merge multipart/VR scenes
+    defaultArgs:
+      mode: merge
+
+settings:
+  stash_url:
+    displayName: Stash URL
+    description: Override the GraphQL endpoint, e.g. http://localhost:9999
+    type: STRING
+
+  api_key:
+    displayName: API Key
+    description: Leave blank if authentication is disabled
+    type: STRING
+
+  vr_tag_name:
+    displayName: VR Tag Name
+    description: Name of the tag to apply to merged VR scenes (default "VR")
+    type: STRING
+
+  multipart_tag_name:
+    displayName: Multipart Tag Name
+    description: Name of the tag applied to all merged scenes (default "Multipart")
+    type: STRING
+
+  vr_only:
+    displayName: VR Scenes Only
+    description: Only consider scenes already tagged with the VR tag
+    type: BOOLEAN
+
+  merge_delay_ms:
+    displayName: Delay Between Merges (ms)
+    description: Milliseconds to wait between each merge mutation. Default 200.
+    type: NUMBER
