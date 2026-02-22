@@ -14,6 +14,10 @@ contains non-Latin characters:
   5. Attach the StashDB stash_id to the performer if a match is found
   6. Preserve the original Japanese name in aliases
 
+For performers already synced (Latin name), re-running will:
+  - Attach a missing StashDB stash_id if a match is found
+  - Update the name to StashDB's recommended name if it differs
+
 Requires: stashapp-tools  (pip install stashapp-tools)
 """
 
@@ -228,9 +232,85 @@ def process(stash, dry_run=False):
         current_name = performer.get('name', '')
         current_aliases = performer.get('alias_list') or []
 
-        # Skip if already Latin
+        # If already Latin, check if StashDB stash_id is missing or name
+        # differs from StashDB's recommended name (handles re-runs)
         if is_latin(current_name):
-            stats['skipped_latin'] += 1
+            if not stashdb_client or not stashdb_box:
+                stats['skipped_latin'] += 1
+                continue
+
+            # Check if performer already has a StashDB stash_id
+            stashdb_ep = stashdb_box['endpoint']
+            existing_stash_ids = performer.get('stash_ids') or []
+            has_stashdb_id = any(
+                endpoint_matches(s.get('endpoint', ''), stashdb_ep)
+                for s in existing_stash_ids
+            )
+
+            # Search StashDB to check name and get stash_id
+            try:
+                stashdb_name, stashdb_pid = find_stashdb_match(stashdb_client, current_name)
+            except Exception as e:
+                log_warn(f"  [{i+1}/{total}] {current_name}: StashDB search failed: {e}")
+                stats['skipped_latin'] += 1
+                continue
+
+            if not stashdb_name:
+                stats['skipped_latin'] += 1
+                continue
+
+            needs_name_update = stashdb_name.strip().lower() != current_name.strip().lower()
+            needs_stashdb_link = not has_stashdb_id and stashdb_pid
+
+            if not needs_name_update and not needs_stashdb_link:
+                stats['skipped_latin'] += 1
+                continue
+
+            # Build update payload for already-Latin performer
+            update_data = {'id': p_id}
+
+            if needs_name_update:
+                log(f"  [{i+1}/{total}] {current_name} -> {stashdb_name} (StashDB recommended name)")
+                # Preserve old name in aliases
+                updated_aliases = list(current_aliases)
+                if current_name and current_name not in updated_aliases:
+                    updated_aliases.append(current_name)
+                updated_aliases = [a for a in updated_aliases if a.strip().lower() != stashdb_name.strip().lower()]
+                seen = set()
+                deduped = []
+                for a in updated_aliases:
+                    key = a.strip().lower()
+                    if key not in seen:
+                        seen.add(key)
+                        deduped.append(a)
+                update_data['name'] = stashdb_name
+                update_data['alias_list'] = deduped
+                stats['stashdb_match'] += 1
+
+            if needs_stashdb_link:
+                updated_stash_ids = [
+                    {'endpoint': s['endpoint'], 'stash_id': s['stash_id']}
+                    for s in existing_stash_ids
+                ]
+                updated_stash_ids.append({
+                    'endpoint': stashdb_ep,
+                    'stash_id': stashdb_pid,
+                })
+                update_data['stash_ids'] = updated_stash_ids
+                stats['stashdb_linked'] += 1
+                log(f"    Attaching StashDB stash_id {stashdb_pid}")
+
+            if dry_run:
+                log(f"    [DRY] Would update (latin re-check): {update_data}")
+                stats['updated'] += 1
+                continue
+
+            try:
+                stash.update_performer(update_data)
+                stats['updated'] += 1
+            except Exception as e:
+                log_err(f"  [{i+1}/{total}] {current_name}: update failed: {e}")
+                stats['errors'] += 1
             continue
 
         # Query JavStash for performer details
