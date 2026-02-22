@@ -11,7 +11,8 @@ contains non-Latin characters:
   2. Find the first Latin-character alias (English fallback)
   3. Search StashDB for a matching performer
   4. Update the local name (StashDB match preferred, else JavStash alias)
-  5. Preserve the original Japanese name in aliases
+  5. Attach the StashDB stash_id to the performer if a match is found
+  6. Preserve the original Japanese name in aliases
 
 Requires: stashapp-tools  (pip install stashapp-tools)
 """
@@ -146,24 +147,23 @@ def endpoint_matches(performer_endpoint: str, box_endpoint: str) -> bool:
 def find_stashdb_match(stashdb_client: StashBoxClient, english_name: str):
     """
     Search StashDB for a performer matching english_name.
-    Returns the StashDB performer's primary name if a good match is found,
-    otherwise None.
+    Returns (name, stashdb_id) if a good match is found, otherwise (None, None).
     """
     results = stashdb_client.search_performer(english_name)
     if not results:
-        return None
+        return None, None
 
     # Look for an exact case-insensitive match first
     target = english_name.strip().lower()
     for p in results:
         if p.get('name', '').strip().lower() == target:
-            return p['name']
+            return p['name'], p['id']
         # Also check aliases
         for alias in (p.get('aliases') or []):
             if alias.strip().lower() == target:
-                return p['name']
+                return p['name'], p['id']
 
-    return None
+    return None, None
 
 
 # ---------------------------------------------------------------------------
@@ -219,7 +219,7 @@ def process(stash, dry_run=False):
 
     # Process
     stats = {'updated': 0, 'skipped_latin': 0, 'skipped_no_alias': 0,
-             'stashdb_match': 0, 'javstash_fallback': 0, 'errors': 0}
+             'stashdb_match': 0, 'javstash_fallback': 0, 'stashdb_linked': 0, 'errors': 0}
     total = len(candidates)
 
     for i, (performer, jav_stash_id) in enumerate(candidates):
@@ -268,13 +268,14 @@ def process(stash, dry_run=False):
 
         # Try StashDB cross-reference
         new_name = None
+        stashdb_performer_id = None
         if stashdb_client:
             try:
-                stashdb_name = find_stashdb_match(stashdb_client, english_name)
+                stashdb_name, stashdb_performer_id = find_stashdb_match(stashdb_client, english_name)
                 if stashdb_name:
                     new_name = stashdb_name
                     stats['stashdb_match'] += 1
-                    log(f"  [{i+1}/{total}] {current_name} -> {new_name} (StashDB match)")
+                    log(f"  [{i+1}/{total}] {current_name} -> {new_name} (StashDB match, id={stashdb_performer_id})")
             except Exception as e:
                 log_warn(f"  [{i+1}/{total}] {current_name}: StashDB search failed: {e}")
 
@@ -300,8 +301,29 @@ def process(stash, dry_run=False):
                 deduped.append(a)
         updated_aliases = deduped
 
+        # Build updated stash_ids: preserve existing + add StashDB if matched
+        existing_stash_ids = performer.get('stash_ids') or []
+        updated_stash_ids = [
+            {'endpoint': s['endpoint'], 'stash_id': s['stash_id']}
+            for s in existing_stash_ids
+        ]
+        if stashdb_performer_id and stashdb_box:
+            stashdb_ep = stashdb_box['endpoint']
+            # Only add if not already present
+            already_has = any(
+                endpoint_matches(s['endpoint'], stashdb_ep)
+                for s in updated_stash_ids
+            )
+            if not already_has:
+                updated_stash_ids.append({
+                    'endpoint': stashdb_ep,
+                    'stash_id': stashdb_performer_id,
+                })
+                stats['stashdb_linked'] += 1
+                log(f"    Attaching StashDB stash_id {stashdb_performer_id}")
+
         if dry_run:
-            log(f"    [DRY] Would update: name='{new_name}', aliases={updated_aliases}")
+            log(f"    [DRY] Would update: name='{new_name}', aliases={updated_aliases}, stash_ids={updated_stash_ids}")
             stats['updated'] += 1
             continue
 
@@ -311,6 +333,7 @@ def process(stash, dry_run=False):
                 'id': p_id,
                 'name': new_name,
                 'alias_list': updated_aliases,
+                'stash_ids': updated_stash_ids,
             })
             stats['updated'] += 1
         except Exception as e:
@@ -320,7 +343,8 @@ def process(stash, dry_run=False):
     log_progress(1.0)
     log("=" * 50)
     log(f"Done!  Updated={stats['updated']}  "
-        f"StashDB={stats['stashdb_match']}  JavFallback={stats['javstash_fallback']}  "
+        f"StashDB={stats['stashdb_match']}  StashDBLinked={stats['stashdb_linked']}  "
+        f"JavFallback={stats['javstash_fallback']}  "
         f"SkippedLatin={stats['skipped_latin']}  SkippedNoAlias={stats['skipped_no_alias']}  "
         f"Errors={stats['errors']}")
     if dry_run:
