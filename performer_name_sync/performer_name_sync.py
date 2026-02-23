@@ -49,7 +49,10 @@ def graphql_request(query, variables, endpoint, api_key, retries=3):
                 return None
             return j.get('data')
         except requests.exceptions.RequestException as e:
+            status = getattr(getattr(e, 'response', None), 'status_code', None)
             log_err(f"GQL request failed (attempt {attempt+1}/{retries}): {e}")
+            if status == 422:
+                return None  # Semantic rejection, don't retry
             if attempt < retries - 1:
                 time.sleep(2 ** attempt)
             else:
@@ -69,8 +72,8 @@ query FindPerformer($id: ID!) {
 """
 
 SEARCH_PERFORMER_QUERY = """
-query SearchPerformer($input: PerformerSearchInput!) {
-    searchPerformer(input: $input) {
+query SearchPerformer($term: String!) {
+    searchPerformer(term: $term) {
         id
         name
         aliases
@@ -184,7 +187,7 @@ def identify_stashboxes(stash):
 # ---------------------------------------------------------------------------
 def search_stashdb(term, stashdb_ep, stashdb_key):
     data = graphql_request(SEARCH_PERFORMER_QUERY,
-                           {'input': {'term': term}},
+                           {'term': term},
                            ensure_graphql(stashdb_ep), stashdb_key)
     if not data:
         log_warn(f"    StashDB search '{term}': no response data")
