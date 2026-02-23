@@ -92,7 +92,7 @@ jobs:
       - name: Zip plugin
         run: |
           cd "${{ matrix.plugin.folder }}"
-          zip -r "../${{ matrix.plugin.zip }}" ./*
+          zip -r "../${{ matrix.plugin.zip }}" . -x "*.zip"
 
       - name: Generate SHA256
         id: sha256
