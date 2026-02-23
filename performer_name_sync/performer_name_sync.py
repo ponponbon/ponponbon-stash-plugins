@@ -20,13 +20,17 @@ contains non-Latin characters:
      piercings, URL, and breast type
 
 For performers already synced (Latin name), re-running will:
+  - Skip if multiple stash-box IDs are present (already cross-referenced)
+  - Proceed through the full pipeline if only JavStash stash-box ID exists
   - Attach a missing StashDB stash_id if a match is found
   - Update the name to StashDB's recommended name if it differs
-  - Enrich any empty metadata fields from StashDB
+  - Enrich metadata fields from StashDB
 
 StashDB is treated as the preferred source of truth for enrichment,
 while preserving all existing JavStash links, aliases, and locally
-curated data (no existing fields are overwritten).
+curated data.  For multi-value fields (aliases, URLs, tattoos,
+piercings), new entries from StashDB are merged rather than skipped
+when local data already exists.
 
 Requires: stashapp-tools  (pip install stashapp-tools)
 """
@@ -281,14 +285,90 @@ def _map_breast_type(breast_type) -> str:
     return ''
 
 
+def _merge_aliases(stashdb_aliases: list, local_aliases: list, current_name: str) -> list:
+    """
+    Return a list of StashDB aliases that are NOT already present in local_aliases
+    or matching the current primary name.  Case-insensitive dedup.
+    """
+    if not stashdb_aliases:
+        return []
+    existing = {a.strip().lower() for a in local_aliases}
+    if current_name:
+        existing.add(current_name.strip().lower())
+    new_aliases = []
+    for alias in stashdb_aliases:
+        alias = alias.strip() if isinstance(alias, str) else ''
+        if alias and alias.lower() not in existing:
+            existing.add(alias.lower())
+            new_aliases.append(alias)
+    return new_aliases
+
+
+def _merge_urls(stashdb_urls: list, local_p: dict) -> list:
+    """
+    Return a list of URL strings from StashDB that are NOT already present
+    in the local performer's urls list.  Case-insensitive, trailing-slash
+    normalised comparison.
+    """
+    if not stashdb_urls:
+        return []
+    # Gather existing local URLs (both singular 'url' and plural 'urls')
+    local_urls = set()
+    singular = (local_p.get('url') or '').strip()
+    if singular:
+        local_urls.add(singular.rstrip('/').lower())
+    for u in (local_p.get('urls') or []):
+        if isinstance(u, str):
+            local_urls.add(u.strip().rstrip('/').lower())
+
+    new_urls = []
+    for entry in stashdb_urls:
+        url = ''
+        if isinstance(entry, dict):
+            url = (entry.get('url') or '').strip()
+        elif isinstance(entry, str):
+            url = entry.strip()
+        if url and url.rstrip('/').lower() not in local_urls:
+            local_urls.add(url.rstrip('/').lower())
+            new_urls.append(url)
+    return new_urls
+
+
+def _merge_body_mods(stashdb_mods, local_value: str) -> str:
+    """
+    Merge StashDB body-modification entries (tattoos / piercings) with existing
+    local text.  Parses local comma-separated entries, appends any StashDB
+    entries whose normalised text is not already present, returns the combined
+    string.  If local is empty, returns the full StashDB string.
+    """
+    stashdb_str = _format_body_mod(stashdb_mods)
+    if not stashdb_str:
+        return ''
+    if _is_empty(local_value):
+        return stashdb_str
+    # Parse existing entries from local (comma-separated)
+    existing = {e.strip().lower() for e in local_value.split(',') if e.strip()}
+    new_parts = []
+    for part in stashdb_str.split(','):
+        part = part.strip()
+        if part and part.lower() not in existing:
+            existing.add(part.lower())
+            new_parts.append(part)
+    if new_parts:
+        return local_value.rstrip().rstrip(',') + ', ' + ', '.join(new_parts)
+    return ''
+
+
 def build_enrichment_data(stashdb_p: dict, local_p: dict) -> dict:
     """
     Compare a full StashDB performer record against the current local performer
     record and return a dict of fields to apply to the local record.
 
     Rules:
-      - Only fills fields that are empty/None locally (enriches, never overwrites).
-      - Does NOT touch name, alias_list, or stash_ids (managed separately).
+      - For scalar fields: only fills when empty/None locally (never overwrites).
+      - For multi-value text fields (tattoos, piercings): merges new entries
+        from StashDB that are not already present locally.
+      - Does NOT touch name, alias_list, urls, or stash_ids (managed separately).
     """
     enriched = {}
 
@@ -368,19 +448,17 @@ def build_enrichment_data(stashdb_p: dict, local_p: dict) -> dict:
                 career_str += f"-{end}"
             enriched['career_length'] = career_str
 
-    # Tattoos
-    if _is_empty(local_p.get('tattoos')):
-        val = _format_body_mod(stashdb_p.get('tattoos'))
-        if val:
-            enriched['tattoos'] = val
+    # Tattoos (merge: append new entries from StashDB not already in local)
+    tattoo_merged = _merge_body_mods(stashdb_p.get('tattoos'), local_p.get('tattoos') or '')
+    if tattoo_merged:
+        enriched['tattoos'] = tattoo_merged
 
-    # Piercings
-    if _is_empty(local_p.get('piercings')):
-        val = _format_body_mod(stashdb_p.get('piercings'))
-        if val:
-            enriched['piercings'] = val
+    # Piercings (merge: append new entries from StashDB not already in local)
+    piercing_merged = _merge_body_mods(stashdb_p.get('piercings'), local_p.get('piercings') or '')
+    if piercing_merged:
+        enriched['piercings'] = piercing_merged
 
-    # URL - pick the first URL from StashDB urls array
+    # URL (singular legacy field) - fill only if empty
     if _is_empty(local_p.get('url')):
         urls = stashdb_p.get('urls') or []
         if isinstance(urls, list):
@@ -393,6 +471,7 @@ def build_enrichment_data(stashdb_p: dict, local_p: dict) -> dict:
                 chosen_url = urls[0].get('url', '')
             if chosen_url:
                 enriched['url'] = chosen_url
+    # Note: plural 'urls' merge is handled separately via _merge_urls()
 
     return enriched
 
@@ -443,6 +522,7 @@ def process(stash, dry_run=False):
                     tattoos
                     piercings
                     url
+                    urls
                     details
                     stash_ids { endpoint stash_id }
                 }
@@ -477,15 +557,26 @@ def process(stash, dry_run=False):
         current_aliases = performer.get('alias_list') or []
 
         # --------------------------------------------------------------
-        # PATH A: Already-Latin name (re-run enrichment / linking)
+        # PATH A: Already-Latin name — evaluate stash-box ID count
+        #   Multiple stash-box IDs → already cross-referenced, skip.
+        #   Single stash-box ID (JavStash only) → not yet enriched
+        #   from StashDB, proceed through full pipeline.
         # --------------------------------------------------------------
         if is_latin(current_name):
+            existing_stash_ids = performer.get('stash_ids') or []
+
+            # Multiple stash-box IDs means already cross-referenced → skip
+            if len(existing_stash_ids) > 1:
+                log(f"  [{i+1}/{total}] {current_name}: already has {len(existing_stash_ids)} stash-box IDs, skipping")
+                stats['skipped_latin'] += 1
+                continue
+
+            # Need StashDB client to proceed with enrichment
             if not stashdb_client or not stashdb_box:
                 stats['skipped_latin'] += 1
                 continue
 
             stashdb_ep = stashdb_box['endpoint']
-            existing_stash_ids = performer.get('stash_ids') or []
             has_stashdb_id = any(
                 endpoint_matches(s.get('endpoint', ''), stashdb_ep)
                 for s in existing_stash_ids
@@ -508,17 +599,25 @@ def process(stash, dry_run=False):
 
             # Fetch full StashDB performer data for enrichment
             enrichment = {}
+            alias_merge = []
+            url_merge = []
             if stashdb_pid:
                 try:
                     stashdb_full = stashdb_client.find_performer_full(stashdb_pid)
                     if stashdb_full:
                         enrichment = build_enrichment_data(stashdb_full, performer)
+                        alias_merge = _merge_aliases(stashdb_full.get('aliases') or [], current_aliases, current_name)
+                        url_merge = _merge_urls(stashdb_full.get('urls') or [], performer)
                         if enrichment:
                             log(f"    Enrichment fields from StashDB: {list(enrichment.keys())}")
+                        if alias_merge:
+                            log(f"    Merging {len(alias_merge)} new alias(es) from StashDB")
+                        if url_merge:
+                            log(f"    Merging {len(url_merge)} new URL(s) from StashDB")
                 except Exception as e:
                     log_warn(f"  [{i+1}/{total}] {current_name}: StashDB enrichment fetch failed: {e}")
 
-            if not needs_name_update and not needs_stashdb_link and not enrichment:
+            if not needs_name_update and not needs_stashdb_link and not enrichment and not alias_merge and not url_merge:
                 stats['skipped_latin'] += 1
                 continue
 
@@ -527,7 +626,7 @@ def process(stash, dry_run=False):
 
             if needs_name_update:
                 log(f"  [{i+1}/{total}] {current_name} -> {stashdb_name} (StashDB recommended name)")
-                updated_aliases = list(current_aliases)
+                updated_aliases = list(current_aliases) + alias_merge
                 if current_name and current_name not in updated_aliases:
                     updated_aliases.append(current_name)
                 updated_aliases = [a for a in updated_aliases if a.strip().lower() != stashdb_name.strip().lower()]
@@ -541,6 +640,21 @@ def process(stash, dry_run=False):
                 update_data['name'] = stashdb_name
                 update_data['alias_list'] = deduped
                 stats['stashdb_match'] += 1
+            elif alias_merge:
+                # No name change but new aliases to merge
+                updated_aliases = list(current_aliases) + alias_merge
+                seen = set()
+                deduped = []
+                for a in updated_aliases:
+                    key = a.strip().lower()
+                    if key not in seen:
+                        seen.add(key)
+                        deduped.append(a)
+                update_data['alias_list'] = deduped
+
+            if url_merge:
+                local_urls = list(performer.get('urls') or [])
+                update_data['urls'] = local_urls + url_merge
 
             if needs_stashdb_link:
                 updated_stash_ids = [
@@ -660,22 +774,50 @@ def process(stash, dry_run=False):
                 stats['stashdb_linked'] += 1
                 log(f"    Attaching StashDB stash_id {stashdb_performer_id}")
 
-        # Fetch full StashDB data for metadata enrichment
+        # Fetch full StashDB data for metadata enrichment + merge
         enrichment = {}
+        alias_merge = []
+        url_merge = []
         if stashdb_performer_id and stashdb_client:
             try:
                 stashdb_full = stashdb_client.find_performer_full(stashdb_performer_id)
                 if stashdb_full:
                     enrichment = build_enrichment_data(stashdb_full, performer)
+                    # Merge StashDB aliases into local alias list
+                    alias_merge = _merge_aliases(
+                        stashdb_full.get('aliases') or [],
+                        updated_aliases,
+                        new_name,
+                    )
+                    # Merge StashDB URLs into local URLs
+                    url_merge = _merge_urls(stashdb_full.get('urls') or [], performer)
                     if enrichment:
                         log(f"    Enrichment fields from StashDB: {list(enrichment.keys())}")
+                    if alias_merge:
+                        log(f"    Merging {len(alias_merge)} new alias(es) from StashDB")
+                    if url_merge:
+                        log(f"    Merging {len(url_merge)} new URL(s) from StashDB")
+                    if enrichment or alias_merge or url_merge:
                         stats['enriched'] += 1
             except Exception as e:
                 log_warn(f"  [{i+1}/{total}] {current_name}: StashDB enrichment fetch failed: {e}")
 
+        # Incorporate alias merge
+        if alias_merge:
+            updated_aliases = updated_aliases + alias_merge
+            seen = set()
+            deduped = []
+            for a in updated_aliases:
+                key = a.strip().lower()
+                if key not in seen:
+                    seen.add(key)
+                    deduped.append(a)
+            updated_aliases = deduped
+
         if dry_run:
             log(f"    [DRY] Would update: name='{new_name}', aliases={updated_aliases}, "
-                f"stash_ids={updated_stash_ids}, enrichment={list(enrichment.keys())}")
+                f"stash_ids={updated_stash_ids}, enrichment={list(enrichment.keys())}"
+                f"{', url_merge=' + str(url_merge) if url_merge else ''}")
             stats['updated'] += 1
             continue
 
@@ -687,6 +829,11 @@ def process(stash, dry_run=False):
             'stash_ids': updated_stash_ids,
         }
         update_payload.update(enrichment)
+
+        # Merge URLs if any new ones from StashDB
+        if url_merge:
+            local_urls = list(performer.get('urls') or [])
+            update_payload['urls'] = local_urls + url_merge
 
         # Update the performer
         try:
