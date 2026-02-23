@@ -18,7 +18,7 @@
   name: performer_name_sync
   metadata:
     description: Cross-references JavStash and StashDB stash-box endpoints to update performer names from Japanese to English
-  version: "1.14-2c417eb"
-  date: "2026-02-23 06:37:39"
+  version: "1.15-29b4011"
+  date: "2026-02-23 06:40:41"
   path: performer_name_sync.zip
-  sha256: 623f70d0027d6fcb024daf440988132bdef3c8c7ae939b6af5950d277dd2feed
+  sha256: f24775ef8dda2bc3cac9b768ce327cba8bf5de94da9e84257cf380ec0ef49a2e
