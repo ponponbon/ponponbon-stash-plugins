@@ -187,8 +187,14 @@ def search_stashdb(term, stashdb_ep, stashdb_key):
                            {'input': {'term': term}},
                            ensure_graphql(stashdb_ep), stashdb_key)
     if not data:
+        log_warn(f"    StashDB search '{term}': no response data")
         return None, None
     results = data.get('searchPerformer', [])
+    if not results:
+        log(f"    StashDB search '{term}': 0 results")
+        return None, None
+    result_names = [p.get('name', '') for p in results]
+    log(f"    StashDB search '{term}': {len(results)} result(s) -> {result_names}")
     target = term.strip().lower()
     for p in results:
         if p.get('name', '').strip().lower() == target:
@@ -196,6 +202,7 @@ def search_stashdb(term, stashdb_ep, stashdb_key):
         for alias in (p.get('aliases') or []):
             if alias.strip().lower() == target:
                 return p['name'], p['id']
+    log(f"    StashDB search '{term}': no exact name/alias match in results")
     return None, None
 
 # ---------------------------------------------------------------------------
@@ -435,6 +442,8 @@ def process_performer(performer, javstash_box, stashdb_box, dry_run=False):
     if not jav_stash_id:
         return 'skip'  # No JavStash ID — not our performer
 
+    log(f"  [{current_name}] JavStash id={jav_stash_id}, stash-box count={len(existing_stash_ids)}")
+
     # Already has multiple stash-box IDs → already cross-referenced, skip
     if len(existing_stash_ids) > 1:
         log(f"  {current_name}: already has {len(existing_stash_ids)} stash-box IDs, skipping")
@@ -448,6 +457,7 @@ def process_performer(performer, javstash_box, stashdb_box, dry_run=False):
 
     jav_aliases = jav_performer.get('aliases') or []
     jav_name = jav_performer.get('name', '')
+    log(f"  [{current_name}] JavStash name='{jav_name}', aliases={jav_aliases}")
 
     # ---- Build candidate list ----
     # Priority: JavStash Latin aliases (in order), then JavStash primary name,
@@ -459,6 +469,8 @@ def process_performer(performer, javstash_box, stashdb_box, dry_run=False):
         if a and is_latin(a) and a.lower() not in seen_terms:
             candidates.append(a)
             seen_terms.add(a.lower())
+        elif a and not is_latin(a):
+            log(f"  [{current_name}] alias '{a}' is non-Latin, skipping as candidate")
     if jav_name and is_latin(jav_name) and jav_name.strip().lower() not in seen_terms:
         candidates.append(jav_name.strip())
         seen_terms.add(jav_name.strip().lower())
@@ -466,12 +478,16 @@ def process_performer(performer, javstash_box, stashdb_box, dry_run=False):
         candidates.append(current_name.strip())
         seen_terms.add(current_name.strip().lower())
 
+    log(f"  [{current_name}] candidates={candidates}")
+
     # Best available Latin name from JavStash (used for rename independent of StashDB)
     best_latin = candidates[0] if candidates else None
 
     if not best_latin:
         log(f"  {current_name}: no Latin name found on JavStash or locally, skipping")
         return 'skipped_no_alias'
+
+    log(f"  [{current_name}] best_latin='{best_latin}', will search StashDB with {len(candidates)} candidate(s)")
 
     # ---- Loop all candidates against StashDB (fixes rerun dead-end) ----
     stashdb_name = stashdb_pid = stashdb_full = None
@@ -481,10 +497,14 @@ def process_performer(performer, javstash_box, stashdb_box, dry_run=False):
         for term in candidates:
             stashdb_name, stashdb_pid = search_stashdb(term, stashdb_ep, stashdb_key)
             if stashdb_name:
-                log(f"  {current_name}: StashDB matched on term '{term}'")
+                log(f"  [{current_name}] StashDB matched '{stashdb_name}' (id={stashdb_pid}) on term '{term}'")
                 break
+        if not stashdb_name:
+            log(f"  [{current_name}] StashDB: no match found after trying all {len(candidates)} candidate(s)")
         if stashdb_pid:
             stashdb_full = fetch_performer_full(stashdb_pid, stashdb_ep, stashdb_key)
+    else:
+        log(f"  [{current_name}] no StashDB box configured, skipping StashDB search")
 
     # ---- Determine new name (decoupled from StashDB match) ----
     # Rename to the best Latin alias regardless of whether StashDB matched.
