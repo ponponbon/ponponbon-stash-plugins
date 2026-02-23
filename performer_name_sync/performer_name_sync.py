@@ -3,7 +3,8 @@
 Performer Name Sync - Stash Plugin
 ===================================
 Cross-references JavStash and StashDB stash-box endpoints to update
-performer names from Japanese to English.
+performer names from Japanese to English and enrich local metadata
+from StashDB.
 
 For every performer with a JavStash stash-box ID whose primary name
 contains non-Latin characters:
@@ -13,10 +14,19 @@ contains non-Latin characters:
   4. Update the local name (StashDB match preferred, else JavStash alias)
   5. Attach the StashDB stash_id to the performer if a match is found
   6. Preserve the original Japanese name in aliases
+  7. Enrich local metadata from StashDB (fills empty fields only):
+     disambiguation, gender, birthdate, ethnicity, country,
+     eye/hair color, height, measurements, career length, tattoos,
+     piercings, URL, and breast type
 
 For performers already synced (Latin name), re-running will:
   - Attach a missing StashDB stash_id if a match is found
   - Update the name to StashDB's recommended name if it differs
+  - Enrich any empty metadata fields from StashDB
+
+StashDB is treated as the preferred source of truth for enrichment,
+while preserving all existing JavStash links, aliases, and locally
+curated data (no existing fields are overwritten).
 
 Requires: stashapp-tools  (pip install stashapp-tools)
 """
@@ -91,7 +101,7 @@ class StashBoxClient:
         return data.get('findPerformer')
 
     def search_performer(self, term: str):
-        """Search performers by name (StashDB)."""
+        """Search performers by name (StashDB). Returns summarised results."""
         data = self._query("""
             query QueryPerformers($input: PerformerSearchInput!) {
                 searchPerformer(input: $input) {
@@ -102,6 +112,40 @@ class StashBoxClient:
             }
         """, {'input': {'term': term}})
         return data.get('searchPerformer', [])
+
+    def find_performer_full(self, performer_id: str):
+        """
+        Fetch full performer metadata from StashDB by ID.
+        Returns the raw performer dict with all enrichment fields.
+        """
+        data = self._query("""
+            query FindPerformerFull($id: ID!) {
+                findPerformer(id: $id) {
+                    id
+                    name
+                    disambiguation
+                    aliases
+                    gender
+                    birth_date
+                    ethnicity
+                    country
+                    eye_color
+                    hair_color
+                    height
+                    cup_size
+                    band_size
+                    waist_size
+                    hip_size
+                    breast_type
+                    career_start_year
+                    career_end_year
+                    tattoos  { location description }
+                    piercings { location description }
+                    urls { url type }
+                }
+            }
+        """, {'id': performer_id})
+        return data.get('findPerformer')
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +215,189 @@ def find_stashdb_match(stashdb_client: StashBoxClient, english_name: str):
 
 
 # ---------------------------------------------------------------------------
+# Metadata enrichment helpers
+# ---------------------------------------------------------------------------
+
+def _is_empty(value) -> bool:
+    """Return True if a local field should be considered unpopulated."""
+    if value is None:
+        return True
+    if isinstance(value, str) and value.strip() == '':
+        return True
+    return False
+
+
+def _format_body_mod(mods) -> str:
+    """Convert a list of {location, description} dicts from StashDB into a string."""
+    if not mods or not isinstance(mods, list):
+        return ''
+    parts = []
+    for m in mods:
+        if not isinstance(m, dict):
+            continue
+        loc = (m.get('location') or '').strip()
+        desc = (m.get('description') or '').strip()
+        if loc and desc:
+            parts.append(f"{loc}: {desc}")
+        elif loc:
+            parts.append(loc)
+        elif desc:
+            parts.append(desc)
+    return ', '.join(parts)
+
+
+def _compose_measurements(stashdb_p: dict) -> str:
+    """
+    Build a measurements string from StashDB band_size, cup_size, waist_size, hip_size.
+    Format: "32B-24-34".  Returns empty string if insufficient data.
+    """
+    band = stashdb_p.get('band_size')
+    cup = (stashdb_p.get('cup_size') or '').strip()
+    waist = stashdb_p.get('waist_size')
+    hip = stashdb_p.get('hip_size')
+    if band and cup:
+        bust_part = f"{band}{cup}"
+        parts = [bust_part]
+        if waist:
+            parts.append(str(waist))
+        if hip:
+            parts.append(str(hip))
+        return '-'.join(parts)
+    return ''
+
+
+def _map_breast_type(breast_type) -> str:
+    """
+    Map StashDB breast_type enum to a Stash-compatible fake_tits string.
+    NATURAL -> 'No', FAKE / AUGMENTED -> 'Yes', NA / None / unknown -> ''
+    """
+    if not breast_type:
+        return ''
+    bt = str(breast_type).upper()
+    if bt in ('FAKE', 'AUGMENTED'):
+        return 'Yes'
+    if bt == 'NATURAL':
+        return 'No'
+    return ''
+
+
+def build_enrichment_data(stashdb_p: dict, local_p: dict) -> dict:
+    """
+    Compare a full StashDB performer record against the current local performer
+    record and return a dict of fields to apply to the local record.
+
+    Rules:
+      - Only fills fields that are empty/None locally (enriches, never overwrites).
+      - Does NOT touch name, alias_list, or stash_ids (managed separately).
+    """
+    enriched = {}
+
+    # Disambiguation
+    if _is_empty(local_p.get('disambiguation')):
+        val = (stashdb_p.get('disambiguation') or '').strip()
+        if val:
+            enriched['disambiguation'] = val
+
+    # Gender
+    if _is_empty(local_p.get('gender')):
+        val = stashdb_p.get('gender')
+        if val:
+            enriched['gender'] = val
+
+    # Birthdate  (StashDB field: birth_date)
+    if _is_empty(local_p.get('birthdate')):
+        bd = stashdb_p.get('birth_date') or ''
+        if isinstance(bd, dict):
+            bd = (bd.get('date') or '').strip()
+        bd = str(bd).strip() if bd else ''
+        if bd:
+            enriched['birthdate'] = bd
+
+    # Ethnicity
+    if _is_empty(local_p.get('ethnicity')):
+        val = stashdb_p.get('ethnicity')
+        if val:
+            enriched['ethnicity'] = val
+
+    # Country
+    if _is_empty(local_p.get('country')):
+        val = (stashdb_p.get('country') or '').strip()
+        if val:
+            enriched['country'] = val
+
+    # Eye color
+    if _is_empty(local_p.get('eye_color')):
+        val = stashdb_p.get('eye_color')
+        if val:
+            enriched['eye_color'] = val
+
+    # Hair color
+    if _is_empty(local_p.get('hair_color')):
+        val = stashdb_p.get('hair_color')
+        if val:
+            enriched['hair_color'] = val
+
+    # Height (StashDB: integer cm -> local height_cm: integer)
+    if _is_empty(local_p.get('height_cm')):
+        val = stashdb_p.get('height')
+        if val:
+            try:
+                enriched['height_cm'] = int(val)
+            except (ValueError, TypeError):
+                pass
+
+    # Measurements (composed from StashDB band/cup/waist/hip)
+    if _is_empty(local_p.get('measurements')):
+        val = _compose_measurements(stashdb_p)
+        if val:
+            enriched['measurements'] = val
+
+    # Fake tits (derived from StashDB breast_type)
+    if _is_empty(local_p.get('fake_tits')):
+        val = _map_breast_type(stashdb_p.get('breast_type'))
+        if val:
+            enriched['fake_tits'] = val
+
+    # Career length (composed from career_start_year / career_end_year)
+    if _is_empty(local_p.get('career_length')):
+        start = stashdb_p.get('career_start_year')
+        end = stashdb_p.get('career_end_year')
+        if start:
+            career_str = str(start)
+            if end:
+                career_str += f"-{end}"
+            enriched['career_length'] = career_str
+
+    # Tattoos
+    if _is_empty(local_p.get('tattoos')):
+        val = _format_body_mod(stashdb_p.get('tattoos'))
+        if val:
+            enriched['tattoos'] = val
+
+    # Piercings
+    if _is_empty(local_p.get('piercings')):
+        val = _format_body_mod(stashdb_p.get('piercings'))
+        if val:
+            enriched['piercings'] = val
+
+    # URL - pick the first URL from StashDB urls array
+    if _is_empty(local_p.get('url')):
+        urls = stashdb_p.get('urls') or []
+        if isinstance(urls, list):
+            chosen_url = ''
+            for u in urls:
+                if isinstance(u, dict) and (u.get('type') or '').upper() == 'HOME':
+                    chosen_url = u.get('url', '')
+                    break
+            if not chosen_url and urls and isinstance(urls[0], dict):
+                chosen_url = urls[0].get('url', '')
+            if chosen_url:
+                enriched['url'] = chosen_url
+
+    return enriched
+
+
+# ---------------------------------------------------------------------------
 # Core processing
 # ---------------------------------------------------------------------------
 def process(stash, dry_run=False):
@@ -192,7 +419,7 @@ def process(stash, dry_run=False):
     javstash_client = StashBoxClient(javstash_box['endpoint'], javstash_box.get('api_key', ''))
     stashdb_client = StashBoxClient(stashdb_box['endpoint'], stashdb_box.get('api_key', '')) if stashdb_box else None
 
-    # Fetch all performers
+    # Fetch all performers (including full metadata for enrichment comparison)
     log("Fetching all performers from local Stash...")
     result = stash.call_GQL("""
         query {
@@ -200,7 +427,23 @@ def process(stash, dry_run=False):
                 performers {
                     id
                     name
+                    disambiguation
                     alias_list
+                    gender
+                    birthdate
+                    ethnicity
+                    country
+                    eye_color
+                    hair_color
+                    height_cm
+                    weight
+                    measurements
+                    fake_tits
+                    career_length
+                    tattoos
+                    piercings
+                    url
+                    details
                     stash_ids { endpoint stash_id }
                 }
             }
@@ -223,7 +466,8 @@ def process(stash, dry_run=False):
 
     # Process
     stats = {'updated': 0, 'skipped_latin': 0, 'skipped_no_alias': 0,
-             'stashdb_match': 0, 'javstash_fallback': 0, 'stashdb_linked': 0, 'errors': 0}
+             'stashdb_match': 0, 'javstash_fallback': 0, 'stashdb_linked': 0,
+             'enriched': 0, 'errors': 0}
     total = len(candidates)
 
     for i, (performer, jav_stash_id) in enumerate(candidates):
@@ -232,14 +476,14 @@ def process(stash, dry_run=False):
         current_name = performer.get('name', '')
         current_aliases = performer.get('alias_list') or []
 
-        # If already Latin, check if StashDB stash_id is missing or name
-        # differs from StashDB's recommended name (handles re-runs)
+        # --------------------------------------------------------------
+        # PATH A: Already-Latin name (re-run enrichment / linking)
+        # --------------------------------------------------------------
         if is_latin(current_name):
             if not stashdb_client or not stashdb_box:
                 stats['skipped_latin'] += 1
                 continue
 
-            # Check if performer already has a StashDB stash_id
             stashdb_ep = stashdb_box['endpoint']
             existing_stash_ids = performer.get('stash_ids') or []
             has_stashdb_id = any(
@@ -247,7 +491,7 @@ def process(stash, dry_run=False):
                 for s in existing_stash_ids
             )
 
-            # Search StashDB to check name and get stash_id
+            # Search StashDB
             try:
                 stashdb_name, stashdb_pid = find_stashdb_match(stashdb_client, current_name)
             except Exception as e:
@@ -262,16 +506,27 @@ def process(stash, dry_run=False):
             needs_name_update = stashdb_name.strip().lower() != current_name.strip().lower()
             needs_stashdb_link = not has_stashdb_id and stashdb_pid
 
-            if not needs_name_update and not needs_stashdb_link:
+            # Fetch full StashDB performer data for enrichment
+            enrichment = {}
+            if stashdb_pid:
+                try:
+                    stashdb_full = stashdb_client.find_performer_full(stashdb_pid)
+                    if stashdb_full:
+                        enrichment = build_enrichment_data(stashdb_full, performer)
+                        if enrichment:
+                            log(f"    Enrichment fields from StashDB: {list(enrichment.keys())}")
+                except Exception as e:
+                    log_warn(f"  [{i+1}/{total}] {current_name}: StashDB enrichment fetch failed: {e}")
+
+            if not needs_name_update and not needs_stashdb_link and not enrichment:
                 stats['skipped_latin'] += 1
                 continue
 
-            # Build update payload for already-Latin performer
+            # Build update payload
             update_data = {'id': p_id}
 
             if needs_name_update:
                 log(f"  [{i+1}/{total}] {current_name} -> {stashdb_name} (StashDB recommended name)")
-                # Preserve old name in aliases
                 updated_aliases = list(current_aliases)
                 if current_name and current_name not in updated_aliases:
                     updated_aliases.append(current_name)
@@ -300,6 +555,10 @@ def process(stash, dry_run=False):
                 stats['stashdb_linked'] += 1
                 log(f"    Attaching StashDB stash_id {stashdb_pid}")
 
+            if enrichment:
+                update_data.update(enrichment)
+                stats['enriched'] += 1
+
             if dry_run:
                 log(f"    [DRY] Would update (latin re-check): {update_data}")
                 stats['updated'] += 1
@@ -312,6 +571,10 @@ def process(stash, dry_run=False):
                 log_err(f"  [{i+1}/{total}] {current_name}: update failed: {e}")
                 stats['errors'] += 1
             continue
+
+        # --------------------------------------------------------------
+        # PATH B: Non-Latin name (primary sync path)
+        # --------------------------------------------------------------
 
         # Query JavStash for performer details
         try:
@@ -337,7 +600,6 @@ def process(stash, dry_run=False):
                 break
 
         if not english_name:
-            # Maybe the JavStash primary name itself is Latin
             if is_latin(jav_name):
                 english_name = jav_name.strip()
 
@@ -364,14 +626,11 @@ def process(stash, dry_run=False):
             stats['javstash_fallback'] += 1
             log(f"  [{i+1}/{total}] {current_name} -> {new_name} (JavStash alias)")
 
-        # Build updated aliases list: preserve existing + add original Japanese name
-        updated_aliases = list(current_aliases)  # copy
-        # Add the original Japanese name if not already present
+        # Build updated aliases: preserve existing + add original Japanese name
+        updated_aliases = list(current_aliases)
         if current_name and current_name not in updated_aliases:
             updated_aliases.append(current_name)
-        # Remove new_name from aliases if it happens to be there (it's now the primary)
         updated_aliases = [a for a in updated_aliases if a.strip().lower() != new_name.strip().lower()]
-        # Deduplicate while preserving order
         seen = set()
         deduped = []
         for a in updated_aliases:
@@ -389,7 +648,6 @@ def process(stash, dry_run=False):
         ]
         if stashdb_performer_id and stashdb_box:
             stashdb_ep = stashdb_box['endpoint']
-            # Only add if not already present
             already_has = any(
                 endpoint_matches(s['endpoint'], stashdb_ep)
                 for s in updated_stash_ids
@@ -402,19 +660,37 @@ def process(stash, dry_run=False):
                 stats['stashdb_linked'] += 1
                 log(f"    Attaching StashDB stash_id {stashdb_performer_id}")
 
+        # Fetch full StashDB data for metadata enrichment
+        enrichment = {}
+        if stashdb_performer_id and stashdb_client:
+            try:
+                stashdb_full = stashdb_client.find_performer_full(stashdb_performer_id)
+                if stashdb_full:
+                    enrichment = build_enrichment_data(stashdb_full, performer)
+                    if enrichment:
+                        log(f"    Enrichment fields from StashDB: {list(enrichment.keys())}")
+                        stats['enriched'] += 1
+            except Exception as e:
+                log_warn(f"  [{i+1}/{total}] {current_name}: StashDB enrichment fetch failed: {e}")
+
         if dry_run:
-            log(f"    [DRY] Would update: name='{new_name}', aliases={updated_aliases}, stash_ids={updated_stash_ids}")
+            log(f"    [DRY] Would update: name='{new_name}', aliases={updated_aliases}, "
+                f"stash_ids={updated_stash_ids}, enrichment={list(enrichment.keys())}")
             stats['updated'] += 1
             continue
 
+        # Build final update payload: base fields + enrichment
+        update_payload = {
+            'id': p_id,
+            'name': new_name,
+            'alias_list': updated_aliases,
+            'stash_ids': updated_stash_ids,
+        }
+        update_payload.update(enrichment)
+
         # Update the performer
         try:
-            stash.update_performer({
-                'id': p_id,
-                'name': new_name,
-                'alias_list': updated_aliases,
-                'stash_ids': updated_stash_ids,
-            })
+            stash.update_performer(update_payload)
             stats['updated'] += 1
         except Exception as e:
             log_err(f"  [{i+1}/{total}] {current_name}: update failed: {e}")
@@ -424,11 +700,12 @@ def process(stash, dry_run=False):
     log("=" * 50)
     log(f"Done!  Updated={stats['updated']}  "
         f"StashDB={stats['stashdb_match']}  StashDBLinked={stats['stashdb_linked']}  "
+        f"Enriched={stats['enriched']}  "
         f"JavFallback={stats['javstash_fallback']}  "
         f"SkippedLatin={stats['skipped_latin']}  SkippedNoAlias={stats['skipped_no_alias']}  "
         f"Errors={stats['errors']}")
     if dry_run:
-        log("(Dry run — no changes were made)")
+        log("(Dry run - no changes were made)")
 
 
 # ---------------------------------------------------------------------------
