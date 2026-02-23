@@ -25,3 +25,4 @@ tasks:
       Preview what would be changed without making any modifications.
     defaultArgs:
       mode: "dry_run"
+# trigger zip rebuild
