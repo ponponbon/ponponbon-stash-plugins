@@ -557,137 +557,25 @@ def process(stash, dry_run=False):
         current_aliases = performer.get('alias_list') or []
 
         # --------------------------------------------------------------
-        # PATH A: Already-Latin name — evaluate stash-box ID count
-        #   Multiple stash-box IDs → already cross-referenced, skip.
-        #   Single stash-box ID (JavStash only) → not yet enriched
-        #   from StashDB, proceed through full pipeline.
+        # Skip check: Already-Latin name with multiple stash-box IDs
+        #   means already cross-referenced → safe to skip.
+        #   Single stash-box ID (JavStash only) → fall through to the
+        #   full pipeline below (query JavStash for aliases, search
+        #   StashDB, enrich, etc.)
         # --------------------------------------------------------------
         if is_latin(current_name):
             existing_stash_ids = performer.get('stash_ids') or []
-
-            # Multiple stash-box IDs means already cross-referenced → skip
             if len(existing_stash_ids) > 1:
                 log(f"  [{i+1}/{total}] {current_name}: already has {len(existing_stash_ids)} stash-box IDs, skipping")
                 stats['skipped_latin'] += 1
                 continue
-
-            # Need StashDB client to proceed with enrichment
-            if not stashdb_client or not stashdb_box:
-                stats['skipped_latin'] += 1
-                continue
-
-            stashdb_ep = stashdb_box['endpoint']
-            has_stashdb_id = any(
-                endpoint_matches(s.get('endpoint', ''), stashdb_ep)
-                for s in existing_stash_ids
-            )
-
-            # Search StashDB
-            try:
-                stashdb_name, stashdb_pid = find_stashdb_match(stashdb_client, current_name)
-            except Exception as e:
-                log_warn(f"  [{i+1}/{total}] {current_name}: StashDB search failed: {e}")
-                stats['skipped_latin'] += 1
-                continue
-
-            if not stashdb_name:
-                stats['skipped_latin'] += 1
-                continue
-
-            needs_name_update = stashdb_name.strip().lower() != current_name.strip().lower()
-            needs_stashdb_link = not has_stashdb_id and stashdb_pid
-
-            # Fetch full StashDB performer data for enrichment
-            enrichment = {}
-            alias_merge = []
-            url_merge = []
-            if stashdb_pid:
-                try:
-                    stashdb_full = stashdb_client.find_performer_full(stashdb_pid)
-                    if stashdb_full:
-                        enrichment = build_enrichment_data(stashdb_full, performer)
-                        alias_merge = _merge_aliases(stashdb_full.get('aliases') or [], current_aliases, current_name)
-                        url_merge = _merge_urls(stashdb_full.get('urls') or [], performer)
-                        if enrichment:
-                            log(f"    Enrichment fields from StashDB: {list(enrichment.keys())}")
-                        if alias_merge:
-                            log(f"    Merging {len(alias_merge)} new alias(es) from StashDB")
-                        if url_merge:
-                            log(f"    Merging {len(url_merge)} new URL(s) from StashDB")
-                except Exception as e:
-                    log_warn(f"  [{i+1}/{total}] {current_name}: StashDB enrichment fetch failed: {e}")
-
-            if not needs_name_update and not needs_stashdb_link and not enrichment and not alias_merge and not url_merge:
-                stats['skipped_latin'] += 1
-                continue
-
-            # Build update payload
-            update_data = {'id': p_id}
-
-            if needs_name_update:
-                log(f"  [{i+1}/{total}] {current_name} -> {stashdb_name} (StashDB recommended name)")
-                updated_aliases = list(current_aliases) + alias_merge
-                if current_name and current_name not in updated_aliases:
-                    updated_aliases.append(current_name)
-                updated_aliases = [a for a in updated_aliases if a.strip().lower() != stashdb_name.strip().lower()]
-                seen = set()
-                deduped = []
-                for a in updated_aliases:
-                    key = a.strip().lower()
-                    if key not in seen:
-                        seen.add(key)
-                        deduped.append(a)
-                update_data['name'] = stashdb_name
-                update_data['alias_list'] = deduped
-                stats['stashdb_match'] += 1
-            elif alias_merge:
-                # No name change but new aliases to merge
-                updated_aliases = list(current_aliases) + alias_merge
-                seen = set()
-                deduped = []
-                for a in updated_aliases:
-                    key = a.strip().lower()
-                    if key not in seen:
-                        seen.add(key)
-                        deduped.append(a)
-                update_data['alias_list'] = deduped
-
-            if url_merge:
-                local_urls = list(performer.get('urls') or [])
-                update_data['urls'] = local_urls + url_merge
-
-            if needs_stashdb_link:
-                updated_stash_ids = [
-                    {'endpoint': s['endpoint'], 'stash_id': s['stash_id']}
-                    for s in existing_stash_ids
-                ]
-                updated_stash_ids.append({
-                    'endpoint': stashdb_ep,
-                    'stash_id': stashdb_pid,
-                })
-                update_data['stash_ids'] = updated_stash_ids
-                stats['stashdb_linked'] += 1
-                log(f"    Attaching StashDB stash_id {stashdb_pid}")
-
-            if enrichment:
-                update_data.update(enrichment)
-                stats['enriched'] += 1
-
-            if dry_run:
-                log(f"    [DRY] Would update (latin re-check): {update_data}")
-                stats['updated'] += 1
-                continue
-
-            try:
-                stash.update_performer(update_data)
-                stats['updated'] += 1
-            except Exception as e:
-                log_err(f"  [{i+1}/{total}] {current_name}: update failed: {e}")
-                stats['errors'] += 1
-            continue
+            # Single stash-box ID — proceed through full pipeline below
+            log(f"  [{i+1}/{total}] {current_name}: Latin name with single stash-box ID, re-processing")
 
         # --------------------------------------------------------------
-        # PATH B: Non-Latin name (primary sync path)
+        # Full enrichment pipeline (PATH B)
+        # Handles both non-Latin names and Latin names with single
+        # stash-box ID that need cross-referencing / enrichment.
         # --------------------------------------------------------------
 
         # Query JavStash for performer details
