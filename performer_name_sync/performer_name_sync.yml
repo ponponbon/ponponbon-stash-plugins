@@ -6,7 +6,7 @@ description: >
   a candidate list of Latin names from JavStash aliases, searches
   StashDB with each candidate, renames to the best available Latin
   name, and enriches metadata from StashDB when a match is found.
-version: "1.8"
+version: "1.9-e7f49e5"
 url: https://github.com/ponponbon/ponponbon-stash-plugins
 
 exec:
