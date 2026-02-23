@@ -1,10 +1,12 @@
 name: "Performer Name Sync"
 description: >
-  Cross-references JavStash and StashDB stash-box endpoints to update
-  performer names. For performers with a Japanese primary name and a
-  JavStash stash-box ID, finds the English (Latin) name via JavStash
-  aliases and optionally upgrades it with StashDB's canonical name.
-version: "1.8-6c52c9b"
+  Cross-references JavStash and StashDB stash-box endpoints to sync
+  performer names and enrich metadata. For every performer with a
+  JavStash stash-box ID (regardless of current name language), builds
+  a candidate list of Latin names from JavStash aliases, searches
+  StashDB with each candidate, renames to the best available Latin
+  name, and enriches metadata from StashDB when a match is found.
+version: "1.8"
 url: https://github.com/ponponbon/ponponbon-stash-plugins
 
 exec:
@@ -16,11 +18,12 @@ interface: raw
 tasks:
   - name: "Sync Performer Names"
     description: >
-      For every performer with a JavStash stash-box ID whose primary
-      name contains non-Latin characters: look up the English name via
-      JavStash aliases, try to find a StashDB match, and update the
-      local performer name accordingly. The original name is preserved
-      in aliases.
+      For every performer with a JavStash stash-box ID: build a
+      candidate list of Latin names from JavStash aliases, search
+      StashDB with each candidate until a match is found, rename to
+      the best Latin name, attach the StashDB stash_id, and enrich
+      metadata. Performers with multiple stash-box IDs are skipped
+      as already cross-referenced.
     defaultArgs:
       mode: "live"
 

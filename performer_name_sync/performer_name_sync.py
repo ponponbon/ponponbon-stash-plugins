@@ -1,23 +1,5 @@
-"""
-Performer Name Sync - Stash Plugin
-===================================
-Cross-references JavStash and StashDB stash-box endpoints to update
-performer names from Japanese to English and enrich local metadata
-from StashDB.
-
-For every performer with a JavStash stash-box ID:
-  1. If already has multiple stash-box IDs (cross-referenced) → skip
-  2. Query JavStash for the performer's aliases
-  3. Determine the best Latin search term (JavStash alias or current name)
-  4. Search StashDB for a matching performer
-  5. Update the local name (StashDB match preferred, else JavStash alias)
-  6. Attach the StashDB stash_id if a match is found
-  7. Preserve the original name in aliases
-  8. Enrich local metadata from StashDB, merging multi-value fields
-     (aliases, URLs, tattoos, piercings) and filling empty scalar fields
-
-Requires: stashapp-tools  (pip install stashapp-tools)
-"""
+# Performer Name Sync
+# Cross-references JavStash and StashDB to sync performer names and enrich metadata.
 
 import sys
 import json
@@ -467,56 +449,58 @@ def process_performer(performer, javstash_box, stashdb_box, dry_run=False):
     jav_aliases = jav_performer.get('aliases') or []
     jav_name = jav_performer.get('name', '')
 
-    # Find best Latin name from JavStash
-    english_name = None
+    # ---- Build candidate list ----
+    # Priority: JavStash Latin aliases (in order), then JavStash primary name,
+    # then current local name. De-duplicated case-insensitively.
+    candidates = []
+    seen_terms = set()
     for alias in jav_aliases:
-        if is_latin(alias):
-            english_name = alias.strip()
-            break
-    if not english_name and is_latin(jav_name):
-        english_name = jav_name.strip()
+        a = alias.strip() if isinstance(alias, str) else ''
+        if a and is_latin(a) and a.lower() not in seen_terms:
+            candidates.append(a)
+            seen_terms.add(a.lower())
+    if jav_name and is_latin(jav_name) and jav_name.strip().lower() not in seen_terms:
+        candidates.append(jav_name.strip())
+        seen_terms.add(jav_name.strip().lower())
+    if current_name and is_latin(current_name) and current_name.strip().lower() not in seen_terms:
+        candidates.append(current_name.strip())
+        seen_terms.add(current_name.strip().lower())
 
-    # Also consider current local name if already Latin (re-run case)
-    search_term = english_name
-    if not search_term and is_latin(current_name):
-        search_term = current_name.strip()
+    # Best available Latin name from JavStash (used for rename independent of StashDB)
+    best_latin = candidates[0] if candidates else None
 
-    if not search_term:
-        log(f"  {current_name}: no Latin name found on JavStash, skipping")
+    if not best_latin:
+        log(f"  {current_name}: no Latin name found on JavStash or locally, skipping")
         return 'skipped_no_alias'
 
-    # ---- Search StashDB ----
-    stashdb_name = None
-    stashdb_pid = None
-    stashdb_full = None
-
+    # ---- Loop all candidates against StashDB (fixes rerun dead-end) ----
+    stashdb_name = stashdb_pid = stashdb_full = None
     if stashdb_box:
         stashdb_ep = stashdb_box['endpoint']
         stashdb_key = stashdb_box.get('api_key', '')
-
-        stashdb_name, stashdb_pid = search_stashdb(search_term, stashdb_ep, stashdb_key)
-
-        # If the current name is Latin and different from the JavStash alias,
-        # also try searching by current name as fallback
-        if not stashdb_name and is_latin(current_name) and current_name.strip().lower() != search_term.lower():
-            stashdb_name, stashdb_pid = search_stashdb(current_name.strip(), stashdb_ep, stashdb_key)
-
+        for term in candidates:
+            stashdb_name, stashdb_pid = search_stashdb(term, stashdb_ep, stashdb_key)
+            if stashdb_name:
+                log(f"  {current_name}: StashDB matched on term '{term}'")
+                break
         if stashdb_pid:
             stashdb_full = fetch_performer_full(stashdb_pid, stashdb_ep, stashdb_key)
 
-    # ---- Determine new name ----
+    # ---- Determine new name (decoupled from StashDB match) ----
+    # Rename to the best Latin alias regardless of whether StashDB matched.
+    # StashDB canonical name overrides if available.
     if stashdb_name:
         new_name = stashdb_name
-        log(f"  {current_name} -> {new_name} (StashDB match, id={stashdb_pid})")
-    elif english_name:
-        new_name = english_name
-        log(f"  {current_name} -> {new_name} (JavStash alias)")
     else:
-        # Current name is already Latin, no StashDB match — keep current
-        new_name = current_name
+        new_name = best_latin
 
-    # If name hasn't changed and no StashDB data, check if there's anything to do
     name_changed = new_name.strip().lower() != current_name.strip().lower()
+    if name_changed:
+        log(f"  {current_name} -> {new_name} {'(StashDB)' if stashdb_name else '(JavStash alias)'}")
+    elif stashdb_pid:
+        log(f"  {current_name}: name unchanged, StashDB matched (id={stashdb_pid}), enriching")
+    else:
+        log(f"  {current_name}: no StashDB match found across {len(candidates)} candidate(s)")
 
     # ---- Build aliases ----
     updated_aliases = list(current_aliases)
