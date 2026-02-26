@@ -10,7 +10,7 @@ description: >
   StashDB with each candidate, renames to the best available Latin
   name, enriches metadata from StashDB, and runs a second dedup
   pass to catch any sync-created duplicates.
-version: "1.16"
+version: "1.17-53888d1"
 url: https://github.com/ponponbon/ponponbon-stash-plugins
 
 exec:
