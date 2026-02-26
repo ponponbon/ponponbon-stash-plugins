@@ -1,12 +1,16 @@
 name: "Performer Name Sync"
 description: >
   Cross-references JavStash and StashDB stash-box endpoints to sync
-  performer names and enrich metadata. For every performer with a
-  JavStash stash-box ID (regardless of current name language), builds
-  a candidate list of Latin names from JavStash aliases, searches
+  performer names, enrich metadata, and clean up duplicates. Detects
+  duplicate performers by shared stash-box IDs, matching names, and
+  alias-to-name cross-references. Duplicates are merged (metadata
+  combined, scenes/galleries/images reassigned) and removed. Then
+  for every performer with a JavStash stash-box ID, builds a
+  candidate list of Latin names from JavStash aliases, searches
   StashDB with each candidate, renames to the best available Latin
-  name, and enriches metadata from StashDB when a match is found.
-version: "1.15-29b4011"
+  name, enriches metadata from StashDB, and runs a second dedup
+  pass to catch any sync-created duplicates.
+version: "1.16"
 url: https://github.com/ponponbon/ponponbon-stash-plugins
 
 exec:
@@ -18,18 +22,21 @@ interface: raw
 tasks:
   - name: "Sync Performer Names"
     description: >
-      For every performer with a JavStash stash-box ID: build a
-      candidate list of Latin names from JavStash aliases, search
-      StashDB with each candidate until a match is found, rename to
-      the best Latin name, attach the StashDB stash_id, and enrich
-      metadata. Performers with multiple stash-box IDs are skipped
-      as already cross-referenced.
+      Phase 1: Detect and merge duplicate performers (by stash-box ID,
+      name, and alias cross-reference). Merges metadata, reassigns
+      scenes/galleries/images, and removes duplicates.
+      Phase 2: For every performer with a JavStash stash-box ID, build
+      a candidate list of Latin names from JavStash aliases, search
+      StashDB, rename, attach StashDB stash_id, and enrich metadata.
+      Phase 3: Re-check for any duplicates created by the sync.
     defaultArgs:
       mode: "live"
 
   - name: "Dry Run (Preview Only)"
     description: >
-      Preview what would be changed without making any modifications.
+      Preview all dedup merges and sync changes without making any
+      modifications. Shows what duplicates would be merged and what
+      performers would be updated.
     defaultArgs:
       mode: "dry_run"
 # repackage
