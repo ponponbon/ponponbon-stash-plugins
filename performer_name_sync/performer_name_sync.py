@@ -174,7 +174,7 @@ mutation ImageUpdate($id: ID!, $performer_ids: [ID!]) {
 
 PERFORMER_DESTROY_QUERY = """
 mutation PerformerDestroy($id: ID!) {
-    performerDestroy(id: $id)
+    performerDestroy(input: { id: $id })
 }
 """
 
