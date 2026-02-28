@@ -1,0 +1,36 @@
+name: "Create Missing Performers"
+description: >
+  Auto-creates missing performers from stash-box (StashDB, FansDB,
+  JavStash, etc.) for scenes that have been identified via the Scene
+  Tagger but whose performers were not created locally. For each
+  identified scene that is missing performers compared to its
+  stash-box entry, the plugin fetches full performer metadata from
+  the stash-box, creates the performer locally (with stash_id link,
+  image, aliases, and all available fields), and attaches them to the
+  scene. Handles multiple stash-box endpoints, duplicate detection
+  (by stash_id and name), rate limiting, and offers a dry-run mode.
+version: "1.0"
+url: https://github.com/ponponbon/ponponbon-stash-plugins
+
+exec:
+  - python3
+  - "{pluginDir}/create_missing_performers.py"
+
+interface: raw
+
+tasks:
+  - name: "Create Missing Performers"
+    description: >
+      Scans all identified scenes (those with a stash_id) and checks
+      whether their stash-box performer list matches the local
+      performer list. For each missing performer, creates it locally
+      with full metadata and links it to the scene.
+    defaultArgs:
+      mode: "live"
+
+  - name: "Dry Run (Preview Only)"
+    description: >
+      Preview which performers would be created and which scenes
+      would be updated, without making any changes.
+    defaultArgs:
+      mode: "dry_run"

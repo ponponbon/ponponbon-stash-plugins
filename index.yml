@@ -22,3 +22,11 @@
   date: "2026-02-26 06:23:02"
   path: performer_name_sync.zip
   sha256: 81c8e57c68908db64974ce0a1a627d49b47d9340b5d44a429569a207771a5070
+- id: create_missing_performers
+  name: create_missing_performers
+  metadata:
+    description: Auto-creates missing performers from stash-box endpoints (StashDB, FansDB, JavStash, etc.) for scenes identified via the Scene Tagger
+  version: "1.0"
+  date: "2026-02-28 04:57:00"
+  path: create_missing_performers.zip
+  sha256: 4bb081831ac05ee80dbaf529f181896716a5ae35b7e1ed13948d3b44dbc2dfcd
