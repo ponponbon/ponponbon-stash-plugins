@@ -17,11 +17,11 @@
 - id: performer_name_sync
   name: performer_name_sync
   metadata:
-    description: Cross-references JavStash and StashDB stash-box endpoints to sync performer names, repair no-ID performers, and remove unattached no-ID orphans
-  version: "1.19-unlinked"
-  date: "2026-05-16 17:17:49"
+    description: Cross-references JavStash and StashDB stash-box endpoints to update performer names from Japanese to English
+  version: "1.20-d473844"
+  date: "2026-05-16 22:22:25"
   path: performer_name_sync.zip
-  sha256: ff2d290992a98646defa0ed9341d7c07e073532b24ae3e91af2a70d2270d404a
+  sha256: 64f23800fa5acda3e37c4d2403c20191ccb80bee47ff468ec04ca63ab2d2dfc3
 - id: create_missing_performers
   name: create_missing_performers
   metadata:
