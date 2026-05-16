@@ -5,12 +5,15 @@ description: >
   duplicate performers by shared stash-box IDs, matching names, and
   alias-to-name cross-references. Duplicates are merged (metadata
   combined, scenes/galleries/images reassigned) and removed. Then
+  repairs performers without stash-box IDs by exact-matching attached
+  performers against JavStash/StashDB, and removes no-ID performers
+  with no scenes, galleries, or images attached. Finally,
   for every performer with a JavStash stash-box ID, builds a
   candidate list of Latin names from JavStash aliases, searches
   StashDB with each candidate, renames to the best available Latin
   name, enriches metadata from StashDB, and runs a second dedup
   pass to catch any sync-created duplicates.
-version: "1.18-6050fa5"
+version: "1.19-unlinked"
 url: https://github.com/ponponbon/ponponbon-stash-plugins
 
 exec:
@@ -25,10 +28,13 @@ tasks:
       Phase 1: Detect and merge duplicate performers (by stash-box ID,
       name, and alias cross-reference). Merges metadata, reassigns
       scenes/galleries/images, and removes duplicates.
-      Phase 2: For every performer with a JavStash stash-box ID, build
+      Phase 2: Repair performers with no stash-box IDs by exact matching
+      attached performers against JavStash/StashDB, or delete no-ID
+      performers with no scenes/galleries/images.
+      Phase 3: For every performer with a JavStash stash-box ID, build
       a candidate list of Latin names from JavStash aliases, search
       StashDB, rename, attach StashDB stash_id, and enrich metadata.
-      Phase 3: Re-check for any duplicates created by the sync.
+      Phase 4: Re-check for any duplicates created by the sync.
     defaultArgs:
       mode: "live"
 

@@ -154,6 +154,32 @@ query FindImagesByPerformer($performer_id: [ID!]) {
 }
 """
 
+CONTENT_COUNTS_BY_PERFORMER_QUERY = """
+query ContentCountsByPerformer($performer_id: [ID!]) {
+    findScenes(
+        scene_filter: { performers: { value: $performer_id, modifier: INCLUDES } }
+        filter: { per_page: 1 }
+    ) {
+        count
+        scenes { id }
+    }
+    findGalleries(
+        gallery_filter: { performers: { value: $performer_id, modifier: INCLUDES } }
+        filter: { per_page: 1 }
+    ) {
+        count
+        galleries { id }
+    }
+    findImages(
+        image_filter: { performers: { value: $performer_id, modifier: INCLUDES } }
+        filter: { per_page: 1 }
+    ) {
+        count
+        images { id }
+    }
+}
+"""
+
 SCENE_UPDATE_QUERY = """
 mutation SceneUpdate($id: ID!, $performer_ids: [ID!]) {
     sceneUpdate(input: { id: $id, performer_ids: $performer_ids }) { id }
@@ -249,30 +275,72 @@ def identify_stashboxes(stash):
     return javstash, stashdb
 
 # ---------------------------------------------------------------------------
-# StashDB search — find exact match by name or alias
+# Stash-box search - find exact match by name or alias
 # ---------------------------------------------------------------------------
-def search_stashdb(term, stashdb_ep, stashdb_key):
+def search_stashbox(term, endpoint, api_key, label='stash-box',
+                    cache=None, require_unique=False):
+    cache_key = None
+    if cache is not None:
+        cache_key = (norm_endpoint(endpoint), (term or '').strip().lower())
+        if cache_key in cache:
+            return cache[cache_key]
+
     data = graphql_request(SEARCH_PERFORMER_QUERY,
                            {'term': term},
-                           ensure_graphql(stashdb_ep), stashdb_key)
+                           ensure_graphql(endpoint), api_key)
     if not data:
-        log_warn(f"    StashDB search '{term}': no response data")
-        return None, None
+        log_warn(f"    {label} search '{term}': no response data")
+        result = (None, None)
+        if cache is not None:
+            cache[cache_key] = result
+        return result
     results = data.get('searchPerformer', [])
     if not results:
-        log(f"    StashDB search '{term}': 0 results")
-        return None, None
+        log(f"    {label} search '{term}': 0 results")
+        result = (None, None)
+        if cache is not None:
+            cache[cache_key] = result
+        return result
     result_names = [p.get('name', '') for p in results]
-    log(f"    StashDB search '{term}': {len(results)} result(s) -> {result_names}")
+    log(f"    {label} search '{term}': {len(results)} result(s) -> {result_names}")
     target = term.strip().lower()
+    exact_matches = []
     for p in results:
         if p.get('name', '').strip().lower() == target:
-            return p['name'], p['id']
+            exact_matches.append(p)
+            continue
         for alias in (p.get('aliases') or []):
             if alias.strip().lower() == target:
-                return p['name'], p['id']
-    log(f"    StashDB search '{term}': no exact name/alias match in results")
-    return None, None
+                exact_matches.append(p)
+                break
+
+    if exact_matches:
+        unique = {}
+        for p in exact_matches:
+            unique[p['id']] = p
+        if require_unique and len(unique) > 1:
+            names = [p.get('name', '') for p in unique.values()]
+            log_warn(f"    {label} search '{term}': ambiguous exact matches -> {names}")
+            result = (None, None)
+        else:
+            match = next(iter(unique.values()))
+            result = (match['name'], match['id'])
+        if cache is not None:
+            cache[cache_key] = result
+        return result
+
+    log(f"    {label} search '{term}': no exact name/alias match in results")
+    result = (None, None)
+    if cache is not None:
+        cache[cache_key] = result
+    return result
+
+
+# ---------------------------------------------------------------------------
+# StashDB search - compatibility wrapper
+# ---------------------------------------------------------------------------
+def search_stashdb(term, stashdb_ep, stashdb_key):
+    return search_stashbox(term, stashdb_ep, stashdb_key, 'StashDB')
 
 # ---------------------------------------------------------------------------
 # Fetch full performer from a stash-box
@@ -596,6 +664,45 @@ def _merge_performer_metadata(keeper, dupe):
         changed = True
 
     return payload, changed
+
+
+def _find_result_count(container, list_key):
+    if not isinstance(container, dict):
+        return 0
+    count = container.get('count')
+    if isinstance(count, int):
+        return count
+    if isinstance(count, str) and count.isdigit():
+        return int(count)
+    return len(container.get(list_key) or [])
+
+
+def _content_counts(stash, performer_id):
+    """Return scene/gallery/image counts for a performer using a cheap query first."""
+    try:
+        result = stash.call_GQL(CONTENT_COUNTS_BY_PERFORMER_QUERY,
+                                {'performer_id': [performer_id]})
+        if result:
+            return {
+                'scenes': _find_result_count(result.get('findScenes'), 'scenes'),
+                'galleries': _find_result_count(result.get('findGalleries'), 'galleries'),
+                'images': _find_result_count(result.get('findImages'), 'images'),
+            }
+    except Exception as e:
+        log_warn(f"  Content count query failed for performer id={performer_id}: {e}")
+
+    # Fallback for older Stash builds where count is unavailable.
+    counts = {'scenes': 0, 'galleries': 0, 'images': 0}
+    result = stash.call_GQL(FIND_SCENES_BY_PERFORMER_QUERY,
+                            {'performer_id': [performer_id]})
+    counts['scenes'] = len((result or {}).get('findScenes', {}).get('scenes', []))
+    result = stash.call_GQL(FIND_GALLERIES_BY_PERFORMER_QUERY,
+                            {'performer_id': [performer_id]})
+    counts['galleries'] = len((result or {}).get('findGalleries', {}).get('galleries', []))
+    result = stash.call_GQL(FIND_IMAGES_BY_PERFORMER_QUERY,
+                            {'performer_id': [performer_id]})
+    counts['images'] = len((result or {}).get('findImages', {}).get('images', []))
+    return counts
 
 
 def _reassign_content(stash, dupe_id, keeper_id, dry_run=False):
@@ -994,6 +1101,244 @@ def process_performer(performer, javstash_box, stashdb_box, dry_run=False):
 
 
 # ---------------------------------------------------------------------------
+# Repair or prune performers with no stash-box IDs
+# ---------------------------------------------------------------------------
+def _local_name_terms(performer):
+    terms = []
+    seen = set()
+    values = [performer.get('name', '')] + list(performer.get('alias_list') or [])
+    for value in values:
+        term = value.strip() if isinstance(value, str) else ''
+        key = term.lower()
+        if term and key not in seen:
+            seen.add(key)
+            terms.append(term)
+    return terms
+
+
+def _best_latin_from_javstash(jav_performer, current_name):
+    candidates = []
+    seen = set()
+    if jav_performer:
+        for alias in (jav_performer.get('aliases') or []):
+            a = alias.strip() if isinstance(alias, str) else ''
+            if a and is_latin(a) and a.lower() not in seen:
+                seen.add(a.lower())
+                candidates.append(a)
+        jav_name = (jav_performer.get('name') or '').strip()
+        if jav_name and is_latin(jav_name) and jav_name.lower() not in seen:
+            seen.add(jav_name.lower())
+            candidates.append(jav_name)
+    local_name = (current_name or '').strip()
+    if local_name and is_latin(local_name) and local_name.lower() not in seen:
+        candidates.append(local_name)
+    return candidates[0] if candidates else None
+
+
+def _append_stash_id(stash_ids, endpoint, performer_id):
+    if not endpoint or not performer_id:
+        return False
+    for sid in stash_ids:
+        if endpoint_matches(sid.get('endpoint', ''), endpoint):
+            return False
+    stash_ids.append({'endpoint': endpoint, 'stash_id': performer_id})
+    return True
+
+
+def _destroy_unlinked_performer(stash, performer, dry_run=False):
+    name = performer.get('name') or ''
+    p_id = performer.get('id')
+    if dry_run:
+        log(f"  [DRY] Would delete unlinked orphan '{name}' (id={p_id})")
+        return True
+    try:
+        stash.call_GQL(PERFORMER_DESTROY_QUERY, {'id': p_id})
+        log(f"  Deleted unlinked orphan '{name}' (id={p_id})")
+        return True
+    except Exception as e:
+        log_err(f"  Failed to delete unlinked orphan '{name}' (id={p_id}): {e}")
+        return False
+
+
+def process_unlinked_performer(performer, stash, javstash_box, stashdb_box,
+                               search_cache, dry_run=False):
+    """Repair one performer with no stash IDs, or delete if completely unattached."""
+    p_id = performer['id']
+    current_name = performer.get('name', '')
+    current_aliases = performer.get('alias_list') or []
+
+    counts = _content_counts(stash, p_id)
+    attached_total = counts['scenes'] + counts['galleries'] + counts['images']
+    if attached_total == 0:
+        if _destroy_unlinked_performer(stash, performer, dry_run):
+            return 'deleted'
+        return 'error'
+
+    terms = _local_name_terms(performer)
+    if not terms:
+        log(f"  Unlinked performer id={p_id}: no name or aliases to search, keeping")
+        return 'skipped_no_match'
+
+    log(f"  [{current_name}] no stash IDs, attached content="
+        f"{counts['scenes']} scene(s), {counts['galleries']} gallery(ies), "
+        f"{counts['images']} image(s)")
+
+    jav_name = jav_pid = None
+    jav_performer = None
+    if javstash_box:
+        javstash_ep = javstash_box['endpoint']
+        javstash_key = javstash_box.get('api_key', '')
+        for term in terms:
+            jav_name, jav_pid = search_stashbox(
+                term, javstash_ep, javstash_key, 'JavStash',
+                cache=search_cache, require_unique=True
+            )
+            if jav_pid:
+                log(f"  [{current_name}] JavStash matched '{jav_name}' (id={jav_pid}) on term '{term}'")
+                jav_performer = fetch_performer(jav_pid, javstash_ep, javstash_key)
+                if not jav_performer:
+                    jav_performer = {'id': jav_pid, 'name': jav_name, 'aliases': []}
+                break
+
+    stashdb_name = stashdb_pid = stashdb_full = None
+    if stashdb_box:
+        stashdb_ep = stashdb_box['endpoint']
+        stashdb_key = stashdb_box.get('api_key', '')
+        for term in terms:
+            stashdb_name, stashdb_pid = search_stashbox(
+                term, stashdb_ep, stashdb_key, 'StashDB',
+                cache=search_cache, require_unique=True
+            )
+            if stashdb_pid:
+                log(f"  [{current_name}] StashDB matched '{stashdb_name}' (id={stashdb_pid}) on term '{term}'")
+                stashdb_full = fetch_performer_full(stashdb_pid, stashdb_ep, stashdb_key)
+                break
+
+    if not jav_pid and not stashdb_pid:
+        log(f"  {current_name}: no exact stash-box match found, keeping attached performer")
+        return 'skipped_no_match'
+
+    best_latin = _best_latin_from_javstash(jav_performer, current_name)
+    if stashdb_name:
+        new_name = stashdb_name
+    elif best_latin:
+        new_name = best_latin
+    else:
+        new_name = current_name
+
+    name_changed = new_name.strip().lower() != current_name.strip().lower()
+    if name_changed:
+        source = 'StashDB' if stashdb_name else 'JavStash'
+        log(f"  {current_name} -> {new_name} ({source} repair)")
+
+    updated_aliases = list(current_aliases)
+    if current_name and current_name not in updated_aliases:
+        updated_aliases.append(current_name)
+    updated_aliases = [a for a in updated_aliases
+                       if a.strip().lower() != new_name.strip().lower()]
+
+    alias_merge = []
+    if stashdb_full:
+        alias_merge = merge_aliases(
+            stashdb_full.get('aliases') or [],
+            updated_aliases, current_name, new_name
+        )
+        if alias_merge:
+            updated_aliases = updated_aliases + alias_merge
+            log(f"    Merging {len(alias_merge)} new alias(es) from StashDB")
+
+    updated_aliases = dedup_aliases(updated_aliases)
+
+    updated_stash_ids = []
+    linked = False
+    if jav_pid and javstash_box:
+        if _append_stash_id(updated_stash_ids, javstash_box['endpoint'], jav_pid):
+            linked = True
+            log(f"    Attaching JavStash stash_id {jav_pid}")
+    if stashdb_pid and stashdb_box:
+        if _append_stash_id(updated_stash_ids, stashdb_box['endpoint'], stashdb_pid):
+            linked = True
+            log(f"    Attaching StashDB stash_id {stashdb_pid}")
+
+    enrichment = {}
+    url_merge = []
+    if stashdb_full:
+        enrichment = build_enrichment(stashdb_full, performer)
+        url_merge = merge_urls(stashdb_full.get('urls') or [], performer)
+        if enrichment:
+            log(f"    Enrichment fields: {list(enrichment.keys())}")
+        if url_merge:
+            log(f"    Merging {len(url_merge)} new URL(s) from StashDB")
+
+    if not name_changed and not linked and not enrichment and not alias_merge and not url_merge:
+        log(f"  {current_name}: no repair changes needed, skipping")
+        return 'skipped_no_change'
+
+    update_payload = {
+        'id': p_id,
+        'name': new_name,
+        'alias_list': updated_aliases,
+        'stash_ids': updated_stash_ids,
+    }
+    update_payload.update(enrichment)
+    if url_merge:
+        update_payload['urls'] = list(performer.get('urls') or []) + url_merge
+
+    if dry_run:
+        log(f"    [DRY] Would repair unlinked performer: {update_payload}")
+        return 'updated'
+
+    try:
+        stash.update_performer(update_payload)
+        return 'updated'
+    except Exception as e:
+        log_err(f"  {current_name}: unlinked repair failed: {e}")
+        return 'error'
+
+
+def repair_unlinked_performers(stash, performers, javstash_box, stashdb_box,
+                               deleted_ids=None, dry_run=False):
+    stats = {'updated': 0, 'deleted': 0, 'skipped_no_match': 0,
+             'skipped_no_change': 0, 'errors': 0}
+    deleted_ids = deleted_ids or set()
+    search_cache = {}
+    candidates = [
+        p for p in performers
+        if p.get('id') not in deleted_ids and not (p.get('stash_ids') or [])
+    ]
+
+    if not candidates:
+        log("  No performers without stash-box IDs found")
+        return stats, set()
+
+    log(f"  {len(candidates)} performer(s) without stash-box IDs found")
+    removed_ids = set()
+    for performer in candidates:
+        try:
+            result = process_unlinked_performer(
+                performer, stash, javstash_box, stashdb_box,
+                search_cache, dry_run=dry_run
+            )
+        except Exception as e:
+            log_err(f"  {performer.get('name', '')}: unlinked processing failed: {e}")
+            result = 'error'
+
+        if result == 'updated':
+            stats['updated'] += 1
+        elif result == 'deleted':
+            stats['deleted'] += 1
+            removed_ids.add(performer['id'])
+        elif result == 'skipped_no_match':
+            stats['skipped_no_match'] += 1
+        elif result == 'skipped_no_change':
+            stats['skipped_no_change'] += 1
+        elif result == 'error':
+            stats['errors'] += 1
+
+    return stats, removed_ids
+
+
+# ---------------------------------------------------------------------------
 # Main processing loop
 # ---------------------------------------------------------------------------
 def process(stash, dry_run=False):
@@ -1030,6 +1375,32 @@ def process(stash, dry_run=False):
     else:
         log("  Pre-sync: no duplicates found")
 
+    # ---- Phase 2: Repair/prune performers with no stash-box IDs ----
+    log("=" * 50)
+    log("PHASE 2: Unlinked performer repair")
+    log("=" * 50)
+    unlinked_stats, unlinked_deleted = repair_unlinked_performers(
+        stash, performers, javstash_box, stashdb_box,
+        deleted_ids=deleted_ids, dry_run=dry_run
+    )
+    if any(unlinked_stats.values()):
+        log(f"  Unlinked repair: updated {unlinked_stats['updated']}, "
+            f"deleted {unlinked_stats['deleted']}, "
+            f"no match {unlinked_stats['skipped_no_match']}, "
+            f"no change {unlinked_stats['skipped_no_change']}, "
+            f"errors {unlinked_stats['errors']}")
+    else:
+        log("  Unlinked repair: no changes needed")
+
+    # Re-fetch so newly linked performers join the normal JavStash sync pass.
+    if not dry_run and (unlinked_stats['updated'] or unlinked_stats['deleted']):
+        log("Re-fetching performers after unlinked repair...")
+        result = stash.call_GQL(ALL_PERFORMERS_QUERY)
+        performers = result.get('findPerformers', {}).get('performers', [])
+        deleted_ids = set()
+    else:
+        deleted_ids.update(unlinked_deleted)
+
     # Filter to those with JavStash stash_ids (excluding deleted performers)
     javstash_ep = javstash_box['endpoint']
     candidates = []
@@ -1043,9 +1414,9 @@ def process(stash, dry_run=False):
 
     log(f"  {len(candidates)} performer(s) with JavStash stash-box IDs (after dedup)")
 
-    # ---- Phase 1: Main sync loop ----
+    # ---- Phase 3: Main sync loop ----
     log("=" * 50)
-    log("PHASE 2: Performer name sync & enrichment")
+    log("PHASE 3: Performer name sync & enrichment")
     log("=" * 50)
     stats = {'updated': 0, 'skipped_multi': 0, 'skipped_no_alias': 0,
              'skipped_no_change': 0, 'errors': 0}
@@ -1077,11 +1448,11 @@ def process(stash, dry_run=False):
 
     log_progress(0.95)
 
-    # ---- Phase 2: Post-sync duplicate cleanup ----
+    # ---- Phase 4: Post-sync duplicate cleanup ----
     # After sync, performers may have been renamed to the same name or
     # resolved to the same StashDB ID, creating new duplicates.
     log("=" * 50)
-    log("PHASE 3: Post-sync duplicate cleanup")
+    log("PHASE 4: Post-sync duplicate cleanup")
     log("=" * 50)
     log("Re-fetching performers after sync to check for new duplicates...")
     result = stash.call_GQL(ALL_PERFORMERS_QUERY)
@@ -1101,6 +1472,8 @@ def process(stash, dry_run=False):
     log_progress(1.0)
     log("=" * 50)
     log(f"Done!  Updated={stats['updated']}  "
+        f"UnlinkedRepaired={unlinked_stats['updated']}  "
+        f"UnlinkedDeleted={unlinked_stats['deleted']}  "
         f"DuplicatesMerged={total_dupes}  "
         f"SkippedMultiID={stats['skipped_multi']}  "
         f"SkippedNoAlias={stats['skipped_no_alias']}  "
