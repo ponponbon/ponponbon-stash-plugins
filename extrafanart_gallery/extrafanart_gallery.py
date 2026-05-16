@@ -28,19 +28,26 @@ PARENT_IMAGE_CANDIDATES = COVER_CANDIDATES + [
 ]
 FANART_FOLDER = "extrafanart"
 
+def path_key(path):
+    if not path:
+        return ""
+    return os.path.normcase(os.path.normpath(path))
+
 # --- Logging (Stash raw plugin protocol on stderr) ---
+def stash_log(level, msg):
+    print(f"\x01{level}\x02{msg}", file=sys.stderr, flush=True)
+
 def log(msg):
-    # \x01=trace \x02=debug \x03=info \x04=warning \x05=error \x06=progress
-    print(f"\x03{msg}", file=sys.stderr, flush=True)
+    stash_log("i", msg)
 
 def log_warn(msg):
-    print(f"\x04{msg}", file=sys.stderr, flush=True)
+    stash_log("w", msg)
 
 def log_err(msg):
-    print(f"\x05{msg}", file=sys.stderr, flush=True)
+    stash_log("e", msg)
 
 def log_progress(pct):
-    print(f"\x06{pct:.2f}", file=sys.stderr, flush=True)
+    stash_log("p", f"{pct:.2f}")
 
 # --- GraphQL client ---
 class GQL:
@@ -75,14 +82,20 @@ class GQL:
             id title folder{path} scenes{id}}}}""",
             {"f":{"per_page":-1},"gf":{"path":{"value":FANART_FOLDER,"modifier":"INCLUDES"}}})
         gals = d.get("findGalleries",{}).get("galleries",[])
-        norms = {os.path.normpath(p) for p in folder_paths}
+        norms = {path_key(p) for p in folder_paths}
         out = {}
         for g in gals:
             fp = g.get("folder") or {}
-            gp = os.path.normpath(fp.get("path",""))
+            gp = path_key(fp.get("path",""))
             if gp in norms:
                 out[gp] = g
         return out
+
+    def find_gallery(self, gallery_id):
+        d = self.q("""query($id:ID!){
+            findGallery(id:$id){id title scenes{id}}}""",
+            {"id": gallery_id})
+        return d.get("findGallery")
 
     def find_images_in_path(self, folder_path):
         """Find images whose file path starts with folder_path."""
@@ -91,9 +104,9 @@ class GQL:
             files{path} galleries{id}}}}""",
             {"f":{"per_page":-1},"if":{"path":{"value":folder_path,"modifier":"INCLUDES"}}})
         imgs = d.get("findImages",{}).get("images",[])
-        norm = os.path.normpath(folder_path)
+        norm = path_key(folder_path)
         return [i for i in imgs if any(
-            os.path.normpath(os.path.dirname(f.get("path",""))) == norm
+            path_key(os.path.dirname(f.get("path",""))) == norm
             for f in i.get("files",[]))]
 
     def create_gallery(self, title, scene_ids=None):
@@ -113,14 +126,14 @@ class GQL:
         """Find a single image in Stash by exact file path."""
         d = self.q("""query($f:FindFilterType,$if:ImageFilterType){
             findImages(filter:$f,image_filter:$if){images{id
-            files{path}}}}""",
+            files{path} galleries{id}}}}""",
             {"f":{"per_page":5},"if":{"path":{"value":file_path,"modifier":"EQUALS"}}})
         imgs = d.get("findImages",{}).get("images",[])
-        norm = os.path.normpath(file_path)
+        norm = path_key(file_path)
         for img in imgs:
             for f in img.get("files",[]):
-                if os.path.normpath(f.get("path","")) == norm:
-                    return img["id"]
+                if path_key(f.get("path","")) == norm:
+                    return img
         return None
 
     def update_gallery_title(self, gallery_id, title):
@@ -152,6 +165,25 @@ def find_parent_images(d):
 def gallery_title_from_dir(parent_name):
     """Extract code/ID from directory name. 'SNOS-094 - (2026-02-09)' -> 'SNOS-094'"""
     return parent_name.split(" - ")[0].strip()
+
+def gallery_ids_for_image(image):
+    return {g["id"] for g in image.get("galleries", [])}
+
+def pick_existing_gallery_id(images):
+    counts = {}
+    for img in images:
+        for gid in gallery_ids_for_image(img):
+            counts[gid] = counts.get(gid, 0) + 1
+    if not counts:
+        return None
+
+    def sort_key(item):
+        gid, count = item
+        gid_text = str(gid)
+        gid_order = (0, int(gid_text)) if gid_text.isdigit() else (1, gid_text)
+        return (-count, gid_order)
+
+    return sorted(counts.items(), key=sort_key)[0][0]
 
 
 # --- Core ---
@@ -190,7 +222,7 @@ def process(gql, dry_run=False):
 
     for i, (parent, ef_path, slist) in enumerate(targets):
         log_progress(i / total)
-        norm_ef = os.path.normpath(ef_path)
+        norm_ef = path_key(ef_path)
         parent_name = os.path.basename(parent)
         gallery = existing_gals.get(norm_ef)
 
@@ -204,15 +236,11 @@ def process(gql, dry_run=False):
                 continue
 
             # Check if images are already in a gallery
-            existing_gal_ids = set()
-            for img in imgs:
-                for g in img.get("galleries", []):
-                    existing_gal_ids.add(g["id"])
-            if existing_gal_ids:
-                # Images already belong to a gallery - use the first one
-                gal_id = list(existing_gal_ids)[0]
+            gal_id = pick_existing_gallery_id(imgs)
+            if gal_id:
+                # Images already belong to a gallery - load its current state
                 log(f"  [{i+1}/{total}] {parent_name}: images already in gallery #{gal_id}")
-                gallery = {"id": gal_id, "scenes": []}
+                gallery = gql.find_gallery(gal_id) or {"id": gal_id, "scenes": []}
             else:
                 # Create new gallery and add images
                 title = gallery_title_from_dir(parent_name)
@@ -246,22 +274,24 @@ def process(gql, dry_run=False):
         if parent_imgs:
             added_names = []
             ids_to_add = []
+            found_parent_images = False
             for pimg in parent_imgs:
-                if dry_run:
-                    added_names.append(os.path.basename(pimg))
+                img = gql.find_image_by_path(pimg)
+                if not img:
                     continue
-                img_id = gql.find_image_by_path(pimg)
-                if img_id:
-                    ids_to_add.append(img_id)
-                    added_names.append(os.path.basename(pimg))
-            if dry_run:
+                found_parent_images = True
+                if gid in gallery_ids_for_image(img):
+                    continue
+                ids_to_add.append(img["id"])
+                added_names.append(os.path.basename(pimg))
+            if dry_run and ids_to_add:
                 log(f"  [{i+1}/{total}] {parent_name}: [DRY] would add {', '.join(added_names)}")
                 stats["covers"] += 1
             elif ids_to_add:
                 gql.add_images(gid, ids_to_add)
                 log(f"  [{i+1}/{total}] {parent_name}: added {', '.join(added_names)}")
                 stats["covers"] += 1
-            else:
+            elif not found_parent_images:
                 log(f"  [{i+1}/{total}] {parent_name}: parent images not in Stash (run Scan)")
         else:
             log(f"  [{i+1}/{total}] {parent_name}: no parent images found")
@@ -270,7 +300,8 @@ def process(gql, dry_run=False):
         linked_sids = {s["id"] for s in gallery.get("scenes", [])}
         for sc in slist:
             sid = sc["id"]
-            if sid in linked_sids:
+            scene_gids = {g["id"] for g in sc.get("galleries", [])}
+            if sid in linked_sids or gid in scene_gids:
                 continue
             if dry_run:
                 log(f"    [DRY] would link to scene {sc.get('title') or sid}")
@@ -279,6 +310,7 @@ def process(gql, dry_run=False):
                 gql.link_scene(sid, gid, eg)
                 log(f"    linked to scene: {sc.get('title') or sid}")
                 stats["linked"] += 1
+                linked_sids.add(sid)
 
     log_progress(1.0)
     log("=" * 40)

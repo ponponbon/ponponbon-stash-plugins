@@ -1,6 +1,6 @@
 name: "Extrafanart Gallery Linker"
 description: Scans scene directories for extrafanart subfolders, imports their images as galleries, sets the cover image, and links them to parent scenes
-version: "1.12-77f59f1"
+version: "1.13-idempotent"
 url: https://github.com/ponponbon/ponponbon-stash-plugins
 
 exec:
@@ -13,10 +13,10 @@ tasks:
   - name: "Link Extrafanart Galleries"
     description: >
       Scans scene directories for a subfolder named extrafanart.
-      If found, triggers a background scan to import images as galleries,
-      sets the cover from folder.jpg/poster.png in the parent directory,
-      and links each gallery to its scene. If new folders were scanned,
-      run this task again after the scan finishes.
+      If found, creates or reuses an existing image-backed gallery,
+      adds missing cover/fanart images from folder.jpg/poster.png in
+      the parent directory, and links each gallery to its scene without
+      repeating title, image, or scene mutations that are already done.
     defaultArgs:
       mode: "link"
 

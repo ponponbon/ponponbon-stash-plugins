@@ -93,21 +93,23 @@ LOG_MESSAGES: List[str] = []
 
 
 # Stash raw-plugin log-level prefixes (written to stderr)
-# \x01=trace  \x02=debug  \x03=info  \x04=warning  \x05=error  \x06=progress
+def stash_log(level: str, message: str):
+    print(f"\x01{level}\x02{message}", file=sys.stderr, flush=True)
+
 def log_info(message: str):
-    print(f"\x03{message}", file=sys.stderr, flush=True)
+    stash_log("i", message)
     LOG_MESSAGES.append(message)
 
 def log_warn(message: str):
-    print(f"\x04{message}", file=sys.stderr, flush=True)
+    stash_log("w", message)
     LOG_MESSAGES.append(message)
 
 def log_err(message: str):
-    print(f"\x05{message}", file=sys.stderr, flush=True)
+    stash_log("e", message)
     LOG_MESSAGES.append(message)
 
 def log_progress(pct: float):
-    print(f"\x06{pct:.2f}", file=sys.stderr, flush=True)
+    stash_log("p", f"{pct:.2f}")
 
 def log_section(title: str):
     log_info(f"\n{'─' * 50}")

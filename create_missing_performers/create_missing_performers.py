@@ -16,17 +16,20 @@ BATCH_PAGE_SIZE = 100       # scenes per page when querying local Stash
 # ---------------------------------------------------------------------------
 # Logging helpers (Stash raw plugin protocol via stderr)
 # ---------------------------------------------------------------------------
+def stash_log(level, msg):
+    print(f"\x01{level}\x02{msg}", file=sys.stderr, flush=True)
+
 def log(msg):
-    print(f"\x03{msg}", file=sys.stderr, flush=True)
+    stash_log("i", msg)
 
 def log_warn(msg):
-    print(f"\x04{msg}", file=sys.stderr, flush=True)
+    stash_log("w", msg)
 
 def log_err(msg):
-    print(f"\x05{msg}", file=sys.stderr, flush=True)
+    stash_log("e", msg)
 
 def log_progress(pct):
-    print(f"\x06{pct:.2f}", file=sys.stderr, flush=True)
+    stash_log("p", f"{pct:.2f}")
 
 # ---------------------------------------------------------------------------
 # GraphQL helper with retries (for stash-box requests)
