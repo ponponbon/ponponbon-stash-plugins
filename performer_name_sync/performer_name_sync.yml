@@ -1,6 +1,6 @@
 name: "Performer Name Sync"
 description: Syncs performer names and metadata across JavStash and StashDB.
-version: "1.23"
+version: "1.24-df4964f"
 url: https://github.com/ponponbon/ponponbon-stash-plugins
 
 exec:
