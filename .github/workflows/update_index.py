@@ -9,14 +9,16 @@ zip_path  = os.environ["ZIP"]
 sha256    = os.environ["SHA"]
 
 descriptions = {
-    "merge_multipart":     "Merges multipart and VR videos",
-    "extrafanart_gallery": "Scans scene directories for extrafanart subfolders, imports their images as galleries, sets the cover image, and links them to parent scenes",
-    "performer_name_sync": "Cross-references JavStash and StashDB stash-box endpoints to update performer names from Japanese to English",
+    "merge_multipart":     "Merges split scene files and applies Multipart/VR tags",
+    "extrafanart_gallery": "Links extrafanart folders to parent scene galleries",
+    "performer_name_sync": "Syncs performer names and metadata across JavStash and StashDB",
+    "create_missing_performers": "Creates missing local performers from identified stash-box scenes",
 }
 names = {
     "merge_multipart":     "merge_multipart",
     "extrafanart_gallery": "extrafanart_gallery",
     "performer_name_sync": "performer_name_sync",
+    "create_missing_performers": "create_missing_performers",
 }
 
 if plugin_id not in descriptions:

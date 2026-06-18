@@ -1,6 +1,6 @@
 name: "Extrafanart Gallery Linker"
-description: Scans scene directories for extrafanart subfolders, imports their images as galleries, sets the cover image, and links them to parent scenes
-version: "1.14-9850657"
+description: Links extrafanart folders to parent scene galleries.
+version: "1.15"
 url: https://github.com/ponponbon/ponponbon-stash-plugins
 
 exec:
@@ -10,20 +10,28 @@ exec:
 interface: raw
 
 tasks:
-  - name: "Link Extrafanart Galleries"
-    description: >
-      Scans scene directories for a subfolder named extrafanart.
-      If found, creates or reuses an existing image-backed gallery,
-      adds missing cover/fanart images from folder.jpg/poster.png in
-      the parent directory, and links each gallery to its scene without
-      repeating title, image, or scene mutations that are already done.
+  - name: "Link Galleries"
+    description: Create or reuse extrafanart galleries and link them to scenes.
     defaultArgs:
       mode: "link"
 
-  - name: "Dry Run (Preview Only)"
-    description: >
-      Preview what would be changed without making any modifications.
+  - name: "Preview"
+    description: Show planned changes without writing anything.
     defaultArgs:
       mode: "dry_run"
-# repackage
-# repackage
+
+settings:
+  api_key:
+    displayName: API Key
+    description: Optional. Use when Stash API auth is enabled.
+    type: STRING
+
+  stash_url:
+    displayName: Stash URL
+    description: Optional GraphQL URL override.
+    type: STRING
+
+  refresh_existing:
+    displayName: Refresh Existing Galleries
+    description: Re-check galleries that are already linked.
+    type: BOOLEAN

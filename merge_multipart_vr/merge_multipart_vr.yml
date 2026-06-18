@@ -1,6 +1,6 @@
 name: Merge Multipart VR Scenes
-description: Detects multi-part scenes (pt1/pt2, part-01/02, cd1/cd2, disc i/ii, A/B splits), merges them into a single Stash scene, and applies Multipart and VR tags. Supports custom tag names and optional VR-only filtering.
-version: "1.11-d837f48"
+description: Merges split scene files and applies Multipart/VR tags.
+version: "1.12"
 url: "https://github.com/ponponbon/ponponbon-stash-plugins"
 
 exec:
@@ -10,43 +10,43 @@ exec:
 interface: raw
 
 tasks:
-  - name: Preview (dry run)
-    description: Show what would be merged without making any changes
+  - name: Preview
+    description: Show planned merges without writing anything.
     defaultArgs:
       mode: preview
 
   - name: Merge Multipart Scenes
-    description: Find and merge Multipart/VR scenes
+    description: Merge detected multipart scenes.
     defaultArgs:
       mode: merge
 
 settings:
-  a_vr_tag:
+  api_key:
+    displayName: API Key
+    description: Optional. Use when Stash API auth is enabled.
+    type: STRING
+
+  stash_url:
+    displayName: Stash URL
+    description: Optional GraphQL URL override.
+    type: STRING
+
+  vr_tag:
     displayName: VR Tag Name
-    description: Tag applied to merged VR scenes. Default "VR"
+    description: Defaults to VR.
     type: STRING
 
-  b_multipart_tag:
+  multipart_tag:
     displayName: Multipart Tag Name
-    description: Tag applied to all merged scenes. Default "Multipart"
+    description: Defaults to Multipart.
     type: STRING
 
-  c_vr_only:
+  vr_only:
     displayName: VR Scenes Only
-    description: When enabled, only scenes already tagged with the VR tag will be considered
+    description: Only merge scenes already tagged as VR.
     type: BOOLEAN
 
-  d_merge_delay:
+  merge_delay_ms:
     displayName: Delay Between Merges (ms)
-    description: Time to wait between merge operations. Increase if you experience timeouts. Leave blank for default of 200ms
+    description: Defaults to 200.
     type: NUMBER
-
-  e_stash_url:
-    displayName: Stash URL
-    description: Override the GraphQL endpoint. Leave blank to auto-detect. e.g. http://localhost:9999
-    type: STRING
-
-  f_api_key:
-    displayName: API Key
-    description: Only required if authentication is enabled in Stash. Leave blank otherwise
-    type: STRING

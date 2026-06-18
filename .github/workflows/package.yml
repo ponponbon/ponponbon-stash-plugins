@@ -8,6 +8,7 @@ on:
       - 'merge_multipart_vr/**'
       - 'extrafanart_gallery/**'
       - 'performer_name_sync/**'
+      - 'create_missing_performers/**'
 
 jobs:
   detect:
@@ -43,6 +44,11 @@ jobs:
           if echo "$CHANGED" | grep -q '^performer_name_sync/'; then
             PLUGINS=$(echo "$PLUGINS" | python3 -c "import sys,json; p=json.load(sys.stdin); p.append({'folder':'performer_name_sync','id':'performer_name_sync','zip':'performer_name_sync.zip','yml':'performer_name_sync/performer_name_sync.yml'}); print(json.dumps(p))")
             echo "Detected: performer_name_sync"
+          fi
+
+          if echo "$CHANGED" | grep -q '^create_missing_performers/'; then
+            PLUGINS=$(echo "$PLUGINS" | python3 -c "import sys,json; p=json.load(sys.stdin); p.append({'folder':'create_missing_performers','id':'create_missing_performers','zip':'create_missing_performers.zip','yml':'create_missing_performers/create_missing_performers.yml'}); print(json.dumps(p))")
+            echo "Detected: create_missing_performers"
           fi
 
           COUNT=$(echo "$PLUGINS" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))")

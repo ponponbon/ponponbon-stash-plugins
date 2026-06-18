@@ -1,32 +1,32 @@
 - id: merge_multipart
   name: merge_multipart
   metadata:
-    description: Merges multipart and VR videos
-  version: "1.11-d837f48"
-  date: "2026-05-16 23:38:45"
+    description: Merges split scene files and applies Multipart/VR tags
+  version: "1.12"
+  date: "2026-06-18 21:20:27"
   path: merge_multipart.zip
-  sha256: 7a5d5f2e1d54afee44adf70e583c5521bb72a6ff7b0873e4c072243b7f004680
+  sha256: 3c18dd9e7bf320eecfdfab95c3eb4b520e83fb419bd7ccce7d69648e536b308b
 - id: extrafanart_gallery
   name: extrafanart_gallery
   metadata:
-    description: Scans scene directories for extrafanart subfolders, imports their images as galleries, sets the cover image, and links them to parent scenes
-  version: "1.14-9850657"
-  date: "2026-05-16 23:38:52"
+    description: Links extrafanart folders to parent scene galleries
+  version: "1.15"
+  date: "2026-06-18 21:20:27"
   path: extrafanart_gallery.zip
-  sha256: 3db856202d6389794ad077e071906acc18e366ebdd50db45d1e8e2a21da46e27
+  sha256: fc2a900ed537ca0cd9005afcda9c11579e3cf611d83e5ecd3b0ef6e2c778acc1
 - id: performer_name_sync
   name: performer_name_sync
   metadata:
-    description: Cross-references JavStash and StashDB stash-box endpoints to update performer names from Japanese to English
-  version: "1.22-255be32"
-  date: "2026-05-16 23:39:00"
+    description: Syncs performer names and metadata across JavStash and StashDB
+  version: "1.23"
+  date: "2026-06-18 21:20:27"
   path: performer_name_sync.zip
-  sha256: 7057937a98f49f93c3d2e0c585c3928e1ac6750ae4ab690b2b04385e27416f70
+  sha256: 2adbf7e6bb8183bbfea03446e3f2018ac3d8754ce89dca6dbb9157b6d270acac
 - id: create_missing_performers
   name: create_missing_performers
   metadata:
-    description: Auto-creates missing performers from stash-box endpoints (StashDB, FansDB, JavStash, etc.) for scenes identified via the Scene Tagger
-  version: "1.1-logfix"
-  date: "2026-05-16 17:43:56"
+    description: Creates missing local performers from identified stash-box scenes
+  version: "1.2"
+  date: "2026-06-18 21:20:27"
   path: create_missing_performers.zip
-  sha256: e607f9041225b0c233211f8bad64a5e15077f47f693cc6ac6852ee07cea5afc9
+  sha256: 1180c8cf688d01f68e5d8964714d399e5fe136d2410e083510cd8e7c8f97223c

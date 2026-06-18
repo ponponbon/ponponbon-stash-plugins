@@ -3,6 +3,7 @@
 
 import sys
 import json
+import os
 import re
 import time
 import requests
@@ -24,6 +25,25 @@ def log_err(msg):
 
 def log_progress(pct):
     stash_log("p", f"{pct:.2f}")
+
+def first_nonempty(*values):
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
+
+def api_key_from_input(plugin_input):
+    args = plugin_input.get('args', {})
+    server = plugin_input.get('server_connection', {})
+    return first_nonempty(
+        args.get('api_key'),
+        args.get('f_api_key'),
+        server.get('ApiKey'),
+        os.environ.get('STASH_API_KEY'),
+    )
 
 # ---------------------------------------------------------------------------
 # Latin-character detection
@@ -1502,7 +1522,7 @@ def main():
     if host in ('0.0.0.0', ''):
         host = 'localhost'
     port = server.get('Port', 9999)
-    api_key = server.get('ApiKey', '')
+    api_key = api_key_from_input(plugin_input)
 
     mode = plugin_input.get('args', {}).get('mode', 'live')
     dry_run = mode == 'dry_run'

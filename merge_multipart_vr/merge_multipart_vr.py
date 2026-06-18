@@ -30,30 +30,47 @@ def normalize_graphql_url(url: str) -> str:
         url += "/graphql"
     return url
 
+def first_nonempty(*values) -> str:
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
+
 
 def get_stash_url(plugin_input, server_connection):
     args = plugin_input.get("args", {})
-    if args.get("e_stash_url"):
-        return normalize_graphql_url(args["stash_url"]), "plugin arg"
-    env_url = os.environ.get("STASH_URL")
-    if env_url:
-        return normalize_graphql_url(env_url), "environment variable"
+    url = first_nonempty(args.get("stash_url"), args.get("e_stash_url"), os.environ.get("STASH_URL"))
+    if url:
+        return normalize_graphql_url(url), "setting"
     if server_connection:
         scheme = server_connection.get("Scheme", "http")
         host = server_connection.get("Host", "localhost")
+        if host in ("0.0.0.0", ""):
+            host = "localhost"
         port = server_connection.get("Port", 9999)
         return f"{scheme}://{host}:{port}/graphql", "server_connection"
     return "http://localhost:9999/graphql", "localhost fallback"
 
 
-def get_plugin_setting(plugin_input, setting_name, default_value):
+def get_plugin_setting(plugin_input, setting_names, default_value):
     args = plugin_input.get("args", {})
-    if setting_name in args and args[setting_name] is not None:
-        return args[setting_name]
-    env_value = os.environ.get(setting_name.upper())
-    if env_value is not None:
+    if isinstance(setting_names, str):
+        setting_names = [setting_names]
+    for setting_name in setting_names:
+        value = args.get(setting_name)
+        if first_nonempty(value):
+            return value
+    env_value = os.environ.get(setting_names[0].upper())
+    if first_nonempty(env_value):
         return env_value
     return default_value
+
+
+def setting_bool(value) -> bool:
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
 
 
 def output_result(error=None, output=None):
@@ -74,20 +91,28 @@ server_connection = plugin_input.get("server_connection", {})
 args = plugin_input.get("args", {})
 
 STASH_URL, URL_SOURCE = get_stash_url(plugin_input, server_connection)
-API_KEY = get_plugin_setting(plugin_input, "f_api_key", os.environ.get("STASH_API_KEY", ""))
-VR_TAG_NAME = get_plugin_setting(plugin_input, "a_vr_tag", "VR")
-MULTIPART_TAG_NAME = get_plugin_setting(plugin_input, "b_multipart_tag", "Multipart")
+API_KEY = get_plugin_setting(
+    plugin_input,
+    ["api_key", "f_api_key"],
+    first_nonempty(server_connection.get("ApiKey"), os.environ.get("STASH_API_KEY")),
+)
+VR_TAG_NAME = get_plugin_setting(plugin_input, ["vr_tag", "a_vr_tag"], "VR")
+MULTIPART_TAG_NAME = get_plugin_setting(plugin_input, ["multipart_tag", "b_multipart_tag"], "Multipart")
 
 # "vr_only" restricts merging to scenes that already carry the VR tag
-VR_ONLY = str(get_plugin_setting(plugin_input, "c_vr_only", "false")).lower() == "true"
+VR_ONLY = setting_bool(get_plugin_setting(plugin_input, ["vr_only", "c_vr_only"], "false"))
 
 mode = args.get("mode", "merge")
 DRY_RUN = (mode == "preview") or (
-    str(get_plugin_setting(plugin_input, "dry_run", "false")).lower() == "true"
+    setting_bool(get_plugin_setting(plugin_input, "dry_run", "false"))
 )
 
 # Milliseconds to sleep between merge mutations — avoids hammering Stash on large libraries
-MERGE_DELAY_S = float(get_plugin_setting(plugin_input, "f_merge_delay", "200")) / 1000.0
+MERGE_DELAY_S = float(get_plugin_setting(
+    plugin_input,
+    ["merge_delay_ms", "d_merge_delay", "f_merge_delay"],
+    "200",
+)) / 1000.0
 
 LOG_MESSAGES: List[str] = []
 
