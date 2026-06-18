@@ -10,10 +10,10 @@
   name: extrafanart_gallery
   metadata:
     description: Links extrafanart folders to parent scene galleries
-  version: "1.15"
-  date: "2026-06-18 21:20:27"
+  version: "1.16-89d2a4c"
+  date: "2026-06-18 21:30:54"
   path: extrafanart_gallery.zip
-  sha256: fc2a900ed537ca0cd9005afcda9c11579e3cf611d83e5ecd3b0ef6e2c778acc1
+  sha256: 9d51059446192027e3e0d810fdfe4368e945d43d8480b2f33859efe1ae5431b1
 - id: performer_name_sync
   name: performer_name_sync
   metadata:
