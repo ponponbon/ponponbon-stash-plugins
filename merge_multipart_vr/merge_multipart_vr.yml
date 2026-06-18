@@ -1,6 +1,6 @@
 name: Merge Multipart VR Scenes
 description: Merges split scene files and applies Multipart/VR tags.
-version: "1.12"
+version: "1.13-44e0b4a"
 url: "https://github.com/ponponbon/ponponbon-stash-plugins"
 
 exec:

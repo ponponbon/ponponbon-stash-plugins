@@ -2,10 +2,10 @@
   name: merge_multipart
   metadata:
     description: Merges split scene files and applies Multipart/VR tags
-  version: "1.12"
-  date: "2026-06-18 21:20:27"
+  version: "1.13-44e0b4a"
+  date: "2026-06-18 21:30:46"
   path: merge_multipart.zip
-  sha256: 3c18dd9e7bf320eecfdfab95c3eb4b520e83fb419bd7ccce7d69648e536b308b
+  sha256: 220a72e51df27818add3c56e766a86a52f1efc167f4978bb9b1cd856a1191469
 - id: extrafanart_gallery
   name: extrafanart_gallery
   metadata:
