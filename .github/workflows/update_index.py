@@ -9,7 +9,7 @@ zip_path  = os.environ["ZIP"]
 sha256    = os.environ["SHA"]
 
 descriptions = {
-    "merge_multipart":     "Merges split scene files and applies Multipart/VR tags",
+    "merge_multipart":     "Links multipart scenes into Groups ordered by part number",
     "extrafanart_gallery": "Links extrafanart folders to parent scene galleries",
     "performer_name_sync": "Syncs performer names and metadata across JavStash and StashDB",
     "create_missing_performers": "Creates missing local performers from identified stash-box scenes",

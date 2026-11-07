@@ -1,6 +1,11 @@
-name: Merge Multipart VR Scenes
-description: Merges split scene files and applies Multipart/VR tags.
-version: "1.13-44e0b4a"
+name: Multipart Scene Groups
+description: >-
+  Links multipart scenes (pt1/pt2, cd1/cd2, A/B ...) in the same folder into a
+  native Stash Group ordered by part number, and tags them Multipart. Scenes are
+  no longer merged, so every part stays playable. Note: the VR button in the
+  player is controlled natively by Settings → Interface → VR tag; this plugin
+  only adds the VR tag when "Tag multipart scenes as VR" is enabled.
+version: "2.0"
 url: "https://github.com/ponponbon/ponponbon-stash-plugins"
 
 exec:
@@ -11,14 +16,14 @@ interface: raw
 
 tasks:
   - name: Preview
-    description: Show planned merges without writing anything.
+    description: Log the groups, memberships and tags that would be created. Writes nothing.
     defaultArgs:
       mode: preview
 
-  - name: Merge Multipart Scenes
-    description: Merge detected multipart scenes.
+  - name: Group Multipart Scenes
+    description: Find or create a Group per multipart set and add each part with its part number.
     defaultArgs:
-      mode: merge
+      mode: group
 
 settings:
   api_key:
@@ -33,7 +38,7 @@ settings:
 
   vr_tag:
     displayName: VR Tag Name
-    description: Defaults to VR.
+    description: Defaults to VR. Used by "VR Scenes Only" and "Tag multipart scenes as VR".
     type: STRING
 
   multipart_tag:
@@ -43,10 +48,15 @@ settings:
 
   vr_only:
     displayName: VR Scenes Only
-    description: Only merge scenes already tagged as VR.
+    description: Only group scenes already tagged with the VR tag.
     type: BOOLEAN
 
-  merge_delay_ms:
-    displayName: Delay Between Merges (ms)
-    description: Defaults to 200.
+  tag_as_vr:
+    displayName: Tag multipart scenes as VR
+    description: Off by default. When on, also adds the VR tag to every multipart scene.
+    type: BOOLEAN
+
+  update_delay_ms:
+    displayName: Delay Between Updates (ms)
+    description: Pause after each scene update. Defaults to 200.
     type: NUMBER
