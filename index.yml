@@ -1,11 +1,11 @@
 - id: merge_multipart
   name: merge_multipart
   metadata:
-    description: Links multipart scenes into Groups ordered by part number
-  version: "2.1-24bb4c5"
-  date: "2026-11-07 20:09:29"
+    description: "Links multipart scenes into Groups ordered by part number"
+  version: "2.3-a74212a"
+  date: "2026-11-07 20:21:45"
   path: merge_multipart.zip
-  sha256: 217b7ab2db2e991ea5cdfaad9acd5a57bbd14d2090584b08cad39b71f983979e
+  sha256: 353f050a52e7804dde0b1f5463255006a1bf8d12333901f65e7a9d74a5af3f98
 - id: extrafanart_gallery
   name: extrafanart_gallery
   metadata:
