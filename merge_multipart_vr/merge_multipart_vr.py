@@ -103,7 +103,10 @@ MULTIPART_TAG_NAME = get_plugin_setting(plugin_input, ["multipart_tag", "b_multi
 VR_ONLY = setting_bool(get_plugin_setting(plugin_input, ["vr_only", "c_vr_only"], "false"))
 
 mode = args.get("mode", "merge")
-DRY_RUN = (mode == "preview") or (
+# "Undo Groups and Re-merge": remove the Groups that plugin versions 2.x
+# created, then run the normal merge so parts go back into one scene.
+UNDO_GROUPS = mode in ("undo_groups", "undo_groups_preview")
+DRY_RUN = (mode in ("preview", "undo_groups_preview")) or (
     setting_bool(get_plugin_setting(plugin_input, "dry_run", "false"))
 )
 
@@ -275,6 +278,7 @@ def fetch_scenes_page(page: int, per_page: int = 200) -> Tuple[int, List[Dict]]:
               id title
               files { id path basename }
               tags { id name }
+              groups { group { id } scene_index }
             }
           }
         }""",
@@ -313,6 +317,81 @@ def scene_merge(target_id: str, source_ids: List[str]):
         "mutation($input: SceneMergeInput!) { sceneMerge(input: $input) { id } }",
         {"input": {"destination": target_id, "source": source_ids}},
     )
+
+
+def find_group(group_id: str) -> Optional[Dict]:
+    return gql(
+        """query($id: ID!) {
+          findGroup(id: $id) {
+            id name director synopsis date urls
+            studio { id }
+            scenes { id }
+          }
+        }""",
+        {"id": group_id},
+    )["findGroup"]
+
+
+def group_destroy(group_id: str):
+    if DRY_RUN:
+        log_info(f"  [DRY] would delete group {group_id}")
+        return
+    gql(
+        "mutation($input: GroupDestroyInput!) { groupDestroy(input: $input) }",
+        {"input": {"id": group_id}},
+    )
+
+
+def is_plugin_group(group: Dict, part_by_scene: Dict[str, int], index_by_scene: Dict[str, Any]) -> bool:
+    """True only for a Group shaped exactly like the ones plugin 2.x made:
+    name only (no studio, director, synopsis, date or URLs), containing
+    nothing but parts of one multipart set, each at scene_index = its part."""
+    if group.get("studio") or group.get("director") or group.get("synopsis")             or group.get("date") or group.get("urls"):
+        return False
+    member_ids = [str(s["id"]) for s in (group.get("scenes") or [])]
+    if not member_ids:
+        return False
+    for sid in member_ids:
+        if sid not in part_by_scene or index_by_scene.get(sid) != part_by_scene[sid]:
+            return False
+    return True
+
+
+def undo_groups(all_scenes: List[Dict]) -> int:
+    """Delete the Groups that plugin 2.x created for multipart sets. Groups a
+    user made or edited (extra scenes, studio, synopsis, ...) are left alone."""
+    sets: Dict[Tuple[str, str], List[Tuple[Dict, int]]] = {}
+    for sc in all_scenes:
+        if not sc["files"]:
+            continue
+        f = sc["files"][0]
+        base, part = normalize_basename(f["basename"])
+        if part is None:
+            continue
+        key = (str(pathlib.Path(f["path"]).parent), base.lower())
+        sets.setdefault(key, []).append((sc, part))
+
+    deleted = 0
+    for (dirpath, base), items in sets.items():
+        if len(items) < 2:
+            continue
+        part_by_scene = {str(sc["id"]): part for sc, part in items}
+        candidates: Dict[str, Dict[str, Any]] = {}
+        for sc, _ in items:
+            for sg in (sc.get("groups") or []):
+                gid = str(sg["group"]["id"])
+                candidates.setdefault(gid, {})[str(sc["id"])] = sg.get("scene_index")
+        for gid, index_by_scene in candidates.items():
+            group = find_group(gid)
+            if not group:
+                continue
+            if not is_plugin_group(group, part_by_scene, index_by_scene):
+                log_info(f"  Keeping group {gid} '{group['name']}' ({base}): not created by the plugin")
+                continue
+            log_info(f"  Removing group {gid} '{group['name']}'  ({dirpath})")
+            group_destroy(gid)
+            deleted += 1
+    return deleted
 
 
 # ---------------------------------------------------------------------------
@@ -367,6 +446,11 @@ def main():
         _, scenes = fetch_scenes_page(page, per_page)
         all_scenes.extend(scenes)
     log_info(f"  Found {len(all_scenes)} scenes")
+
+    if UNDO_GROUPS:
+        log_section("Removing Multipart Groups")
+        removed = undo_groups(all_scenes)
+        log_info(f"  {'Would remove' if DRY_RUN else 'Removed'} {removed} group(s)")
 
     # ---- Group by (directory, normalised base) ------------------------------
     groups: Dict[Tuple[str, str], List[Dict]] = {}

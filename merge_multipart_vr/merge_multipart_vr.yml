@@ -20,6 +20,16 @@ tasks:
     defaultArgs:
       mode: merge
 
+  - name: Preview Undo Groups
+    description: Show which multipart Groups (from plugin 2.x) would be removed and which scenes re-merged.
+    defaultArgs:
+      mode: undo_groups_preview
+
+  - name: Undo Groups and Re-merge
+    description: Remove multipart Groups created by plugin 2.x, then merge the parts back into one scene.
+    defaultArgs:
+      mode: undo_groups
+
 settings:
   api_key:
     displayName: API Key
