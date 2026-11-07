@@ -22,19 +22,10 @@
   date: "2026-11-07 20:09:48"
   path: performer_name_sync.zip
   sha256: d9069cf92372315d27e29b922cd4c76f04bdf494645d9b2d464cb97f2fb354d6
-- id: create_missing_performers
-  name: create_missing_performers
-  metadata:
-    description: Creates missing local performers from identified stash-box scenes
-  version: "1.3-81aeba4"
-  date: "2026-06-18 21:31:09"
-  path: create_missing_performers.zip
-  sha256: 4a84bc1e43e6edde24be728105157c7f51fb75b0d28adf91284df43777a934eb
-
 - id: performer_cleanup
   name: performer_cleanup
   metadata:
-    description: One-time performer cleanup: merge, link, fill scenes, flag duplicates, set Identify defaults
+    description: "One-time performer cleanup that merges, links, fills scenes, flags duplicates and sets Identify defaults"
   version: "2.1-22c929d"
   date: "2026-11-07 20:09:57"
   path: performer_cleanup.zip

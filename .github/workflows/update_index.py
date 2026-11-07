@@ -1,3 +1,4 @@
+import json
 import re
 import os
 import sys
@@ -12,7 +13,7 @@ descriptions = {
     "merge_multipart":     "Links multipart scenes into Groups ordered by part number",
     "extrafanart_gallery": "Links extrafanart folders to parent scene galleries",
     "performer_name_sync": "Sets romanized performer names from JavStash and enriches from StashDB",
-    "performer_cleanup": "One-time performer cleanup: merge, link, fill scenes, flag duplicates, set Identify defaults",
+    "performer_cleanup": "One-time performer cleanup that merges, links, fills scenes, flags duplicates and sets Identify defaults",
 }
 names = {
     "merge_multipart":     "merge_multipart",
@@ -29,7 +30,8 @@ new_block = (
     f"- id: {plugin_id}\n"
     f"  name: {names[plugin_id]}\n"
     f"  metadata:\n"
-    f"    description: {descriptions[plugin_id]}\n"
+    # json.dumps quotes the text so ":" or "#" can never break the YAML
+    f"    description: {json.dumps(descriptions[plugin_id])}\n"
     f'  version: "{version}"\n'
     f'  date: "{date}"\n'
     f"  path: {zip_path}\n"
