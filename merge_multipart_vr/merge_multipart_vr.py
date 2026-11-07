@@ -96,26 +96,33 @@ API_KEY = get_plugin_setting(
     ["api_key", "f_api_key"],
     first_nonempty(server_connection.get("ApiKey"), os.environ.get("STASH_API_KEY")),
 )
-VR_TAG_NAME = get_plugin_setting(plugin_input, ["vr_tag", "a_vr_tag"], "VR")
-MULTIPART_TAG_NAME = get_plugin_setting(plugin_input, ["multipart_tag", "b_multipart_tag"], "Multipart")
-
-# "vr_only" restricts merging to scenes that already carry the VR tag
-VR_ONLY = setting_bool(get_plugin_setting(plugin_input, ["vr_only", "c_vr_only"], "false"))
-
 mode = args.get("mode", "merge")
 # "Undo Groups and Re-merge": remove the Groups that plugin versions 2.x
 # created, then run the normal merge so parts go back into one scene.
 UNDO_GROUPS = mode in ("undo_groups", "undo_groups_preview")
-DRY_RUN = (mode in ("preview", "undo_groups_preview")) or (
-    setting_bool(get_plugin_setting(plugin_input, "dry_run", "false"))
-)
 
-# Milliseconds to sleep between merge mutations — avoids hammering Stash on large libraries
-MERGE_DELAY_S = float(get_plugin_setting(
-    plugin_input,
-    ["merge_delay_ms", "d_merge_delay", "f_merge_delay"],
-    "200",
-)) / 1000.0
+
+def load_settings():
+    """(Re)compute settings from plugin_input args."""
+    global VR_TAG_NAME, MULTIPART_TAG_NAME, VR_ONLY, TAG_AS_VR, DRY_RUN, MERGE_DELAY_S
+    VR_TAG_NAME = get_plugin_setting(plugin_input, ["vr_tag", "a_vr_tag"], "VR")
+    MULTIPART_TAG_NAME = get_plugin_setting(plugin_input, ["multipart_tag", "b_multipart_tag"], "Multipart")
+    # "vr_only" restricts merging to scenes that already carry the VR tag
+    VR_ONLY = setting_bool(get_plugin_setting(plugin_input, ["vr_only", "c_vr_only"], "false"))
+    # Opt-in: also add the VR tag to merged scenes (default off)
+    TAG_AS_VR = setting_bool(get_plugin_setting(plugin_input, ["tag_as_vr"], "false"))
+    DRY_RUN = (mode in ("preview", "undo_groups_preview")) or (
+        setting_bool(get_plugin_setting(plugin_input, "dry_run", "false"))
+    )
+    # Milliseconds to sleep between merge mutations — avoids hammering Stash on large libraries
+    MERGE_DELAY_S = float(get_plugin_setting(
+        plugin_input,
+        ["merge_delay_ms", "d_merge_delay", "f_merge_delay"],
+        "200",
+    )) / 1000.0
+
+
+load_settings()
 
 LOG_MESSAGES: List[str] = []
 
@@ -252,7 +259,7 @@ def test_connection() -> Tuple[bool, str]:
         return False, str(e)
 
 
-def get_or_create_tag(name: str) -> str:
+def find_tag_id(name: str) -> Optional[str]:
     data = gql(
         """query FindTags($filter: FindFilterType!) {
           findTags(filter: $filter) { tags { id name } }
@@ -262,6 +269,16 @@ def get_or_create_tag(name: str) -> str:
     for t in data["findTags"]["tags"]:
         if t["name"].lower() == name.lower():
             return t["id"]
+    return None
+
+
+def get_or_create_tag(name: str) -> str:
+    existing = find_tag_id(name)
+    if existing:
+        return existing
+    if DRY_RUN:
+        log_info(f"  [DRY] would create tag '{name}'")
+        return f"new-tag:{name}"
     created = gql(
         "mutation CreateTag($input: TagCreateInput!) { tagCreate(input: $input) { id } }",
         {"input": {"name": name}},
@@ -419,21 +436,44 @@ def clean_title(title: str) -> str:
 # Main logic
 # ---------------------------------------------------------------------------
 
-def main():
-    log_section("Merge Multipart VR Scenes")
-    log_info(f"  Endpoint : {STASH_URL}  (source: {URL_SOURCE})")
-    log_info(f"  Mode     : {'DRY RUN — no changes will be made' if DRY_RUN else 'LIVE — changes will be applied'}")
-    log_info(f"  VR Only  : {VR_ONLY}")
+def apply_saved_settings():
+    """Stash does not pass saved plugin settings in args: read them from the
+    plugin configuration (plugin id = yml filename). Task args still win."""
+    try:
+        data = gql("query($ids: [ID!]) { configuration { plugins(include: $ids) } }",
+                   {"ids": ["merge_multipart_vr"]})
+        saved = ((data.get("configuration") or {}).get("plugins") or {}).get("merge_multipart_vr") or {}
+    except Exception as e:
+        log_warn(f"  Could not read plugin settings, using defaults: {e}")
+        return
+    for key, value in saved.items():
+        if not first_nonempty(args.get(key)):
+            args[key] = value
+    load_settings()
 
+
+def main():
     ok, msg = test_connection()
     if not ok:
         output_result(error=f"Cannot reach Stash GraphQL: {msg}")
         sys.exit(2)
+    apply_saved_settings()
+
+    log_section("Merge Multipart VR Scenes")
+    log_info(f"  Endpoint : {STASH_URL}  (source: {URL_SOURCE})")
+    log_info(f"  Mode     : {'DRY RUN — no changes will be made' if DRY_RUN else 'LIVE — changes will be applied'}")
+    log_info(f"  VR Only  : {VR_ONLY}")
+    log_info(f"  Tag as VR: {TAG_AS_VR}")
     log_info(f"  Stash    : {msg}")
 
-    vr_tag_id = get_or_create_tag(VR_TAG_NAME) if VR_TAG_NAME else None
+    # The VR tag is only looked up, never created, unless "Tag as VR" is on
+    vr_tag_id = find_tag_id(VR_TAG_NAME) if VR_TAG_NAME else None
+    if VR_ONLY and not vr_tag_id:
+        log_warn(f"  VR Scenes Only is on but tag '{VR_TAG_NAME}' does not exist — nothing will be merged")
+    if TAG_AS_VR and VR_TAG_NAME and not vr_tag_id:
+        vr_tag_id = get_or_create_tag(VR_TAG_NAME)
     mp_tag_id = get_or_create_tag(MULTIPART_TAG_NAME)
-    log_info(f"  Tags     : '{MULTIPART_TAG_NAME}' + '{VR_TAG_NAME}'")
+    log_info(f"  Tags     : '{MULTIPART_TAG_NAME}'" + (f" + '{VR_TAG_NAME}'" if TAG_AS_VR else ""))
 
     # ---- Paginate all scenes ------------------------------------------------
     log_section("Scanning Library")
@@ -456,8 +496,8 @@ def main():
     groups: Dict[Tuple[str, str], List[Dict]] = {}
 
     for sc in all_scenes:
-        if VR_ONLY and vr_tag_id:
-            if not any(t["id"] == vr_tag_id for t in sc["tags"]):
+        if VR_ONLY:
+            if not vr_tag_id or not any(t["id"] == vr_tag_id for t in sc["tags"]):
                 continue
 
         if not sc["files"]:
@@ -510,10 +550,10 @@ def main():
 
         tag_ids = {t["id"] for t in target["tags"]}
         tag_ids.add(mp_tag_id)
-        if vr_tag_id:
+        if TAG_AS_VR and vr_tag_id:
             tag_ids.add(vr_tag_id)
         scene_update_tags(target["id"], list(tag_ids))
-        log_info(f"     Tags    : applied '{MULTIPART_TAG_NAME}'" + (f" + '{VR_TAG_NAME}'" if vr_tag_id else ""))
+        log_info(f"     Tags    : applied '{MULTIPART_TAG_NAME}'" + (f" + '{VR_TAG_NAME}'" if TAG_AS_VR and vr_tag_id else ""))
 
         new_title = clean_title(target["title"] or "")
         if new_title and new_title != target["title"]:
