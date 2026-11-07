@@ -5,7 +5,7 @@ description: >-
   adds missing performers to identified scenes, tags possible duplicates for review,
   optionally deletes orphans, and configures Identify defaults so Stash's native
   Identify keeps the library clean afterwards. Run Preview first.
-version: "2.0"
+version: "2.1-22c929d"
 url: https://github.com/ponponbon/ponponbon-stash-plugins
 
 exec:

@@ -30,3 +30,12 @@
   date: "2026-06-18 21:31:09"
   path: create_missing_performers.zip
   sha256: 4a84bc1e43e6edde24be728105157c7f51fb75b0d28adf91284df43777a934eb
+
+- id: performer_cleanup
+  name: performer_cleanup
+  metadata:
+    description: One-time performer cleanup: merge, link, fill scenes, flag duplicates, set Identify defaults
+  version: "2.1-22c929d"
+  date: "2026-11-07 20:09:57"
+  path: performer_cleanup.zip
+  sha256: f0771c2b3db605ffb2b49faa9374faa1a82220b02f19f4597c0a75bdaf822490
