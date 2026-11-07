@@ -4,7 +4,7 @@ description: >-
   JavStash, keeps the old name as an alias, and links/enriches from a unique
   StashDB match. Run after Performer Cleanup, which handles duplicates, orphans
   and linking unlinked performers.
-version: "1.25"
+version: "1.26-63b9731"
 url: https://github.com/ponponbon/ponponbon-stash-plugins
 
 exec:

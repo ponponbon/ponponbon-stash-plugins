@@ -17,11 +17,11 @@
 - id: performer_name_sync
   name: performer_name_sync
   metadata:
-    description: Syncs performer names and metadata across JavStash and StashDB
-  version: "1.24-df4964f"
-  date: "2026-06-18 21:31:01"
+    description: Sets romanized performer names from JavStash and enriches from StashDB
+  version: "1.26-63b9731"
+  date: "2026-11-07 20:09:48"
   path: performer_name_sync.zip
-  sha256: f9b3533ab2b909d41aa34cd695af2c8f542c23d552c4c32a0e072007e52e2e20
+  sha256: d9069cf92372315d27e29b922cd4c76f04bdf494645d9b2d464cb97f2fb354d6
 - id: create_missing_performers
   name: create_missing_performers
   metadata:
