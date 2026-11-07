@@ -11,7 +11,7 @@ sha256    = os.environ["SHA"]
 descriptions = {
     "merge_multipart":     "Links multipart scenes into Groups ordered by part number",
     "extrafanart_gallery": "Links extrafanart folders to parent scene galleries",
-    "performer_name_sync": "Syncs performer names and metadata across JavStash and StashDB",
+    "performer_name_sync": "Sets romanized performer names from JavStash and enriches from StashDB",
     "performer_cleanup": "One-time performer cleanup: merge, link, fill scenes, flag duplicates, set Identify defaults",
 }
 names = {

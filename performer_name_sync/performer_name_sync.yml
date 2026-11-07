@@ -1,6 +1,10 @@
 name: "Performer Name Sync"
-description: Syncs performer names and metadata across JavStash and StashDB.
-version: "1.24-df4964f"
+description: >-
+  For performers linked to JavStash: sets a romanized (Latin) display name from
+  JavStash, keeps the old name as an alias, and links/enriches from a unique
+  StashDB match. Run after Performer Cleanup, which handles duplicates, orphans
+  and linking unlinked performers.
+version: "1.25"
 url: https://github.com/ponponbon/ponponbon-stash-plugins
 
 exec:
@@ -11,12 +15,12 @@ interface: raw
 
 tasks:
   - name: "Sync Performer Names"
-    description: Rename, enrich, repair, and deduplicate performers.
+    description: Rename JavStash-linked performers to a Latin name and enrich from StashDB.
     defaultArgs:
       mode: "live"
 
   - name: "Preview"
-    description: Show planned performer updates and merges.
+    description: Log planned renames, StashDB links and enrichment. Writes nothing.
     defaultArgs:
       mode: "dry_run"
 
