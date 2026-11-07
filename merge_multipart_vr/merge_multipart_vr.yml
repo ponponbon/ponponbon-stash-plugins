@@ -3,7 +3,7 @@ description: >-
   Merges split scene files and applies the Multipart tag. The VR tag is only added
   when "Tag merged scenes as VR" is on; the player's VR button is controlled
   natively by Settings → Interface → VR tag.
-version: "1.14"
+version: "1.15-5981cc4"
 url: "https://github.com/ponponbon/ponponbon-stash-plugins"
 
 exec:
