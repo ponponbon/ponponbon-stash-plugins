@@ -119,6 +119,7 @@ VR_TAG_NAME = "VR"
 MULTIPART_TAG_NAME = "Multipart"
 VR_ONLY = False
 TAG_AS_VR = False
+SPLIT_MERGED = False
 DRY_RUN = True
 UPDATE_DELAY_S = 0.2
 SESSION = None
@@ -129,7 +130,7 @@ LOG_MESSAGES: List[str] = []
 def configure(plugin_input: Dict[str, Any]):
     """Read settings from the plugin input and build the HTTP session."""
     global STASH_URL, URL_SOURCE, API_KEY, VR_TAG_NAME, MULTIPART_TAG_NAME
-    global VR_ONLY, TAG_AS_VR, DRY_RUN, UPDATE_DELAY_S, SESSION
+    global VR_ONLY, TAG_AS_VR, SPLIT_MERGED, DRY_RUN, UPDATE_DELAY_S, SESSION
 
     server_connection = plugin_input.get("server_connection", {}) or {}
     args = plugin_input.get("args", {}) or {}
@@ -148,6 +149,8 @@ def configure(plugin_input: Dict[str, Any]):
     VR_ONLY = setting_bool(get_plugin_setting(plugin_input, ["vr_only", "c_vr_only"], "false"))
     # Opt-in: also add the VR tag to every multipart scene (default off)
     TAG_AS_VR = setting_bool(get_plugin_setting(plugin_input, ["tag_as_vr"], "false"))
+    # Opt-in: split scenes merged by older versions back into one scene per part
+    SPLIT_MERGED = setting_bool(get_plugin_setting(plugin_input, ["split_merged"], "false"))
 
     mode = args.get("mode", "group")
     DRY_RUN = (mode == "preview") or setting_bool(get_plugin_setting(plugin_input, "dry_run", "false"))
@@ -415,6 +418,67 @@ def plan_scene_update(scene: Dict, group_id: str, part: int,
 
 
 # ---------------------------------------------------------------------------
+# Splitting scenes merged by earlier versions (pure)
+# ---------------------------------------------------------------------------
+
+def split_plan(scene: Dict) -> Optional[List[Dict]]:
+    """
+    For a scene that holds several part files (what older versions of this
+    plugin produced with sceneMerge), return the non-primary files to move
+    into scenes of their own: [{"file", "part"}], sorted by part. The primary
+    file (files[0]) stays on the original scene.
+
+    Returns None unless every file is a part of the same set: same folder,
+    same base name, a detected part number, and no repeated part numbers.
+    So a scene with several encodes of one video is never split.
+    """
+    files = scene.get("files") or []
+    if len(files) < 2:
+        return None
+    keys, parts = set(), []
+    for f in files:
+        base, part = normalize_basename(f["basename"])
+        if part is None:
+            return None
+        keys.add((str(pathlib.Path(f["path"]).parent), base.lower()))
+        parts.append(part)
+    if len(keys) != 1 or len(parts) != len(set(parts)):
+        return None
+    moves = [{"file": f, "part": p} for f, p in zip(files[1:], parts[1:])]
+    return sorted(moves, key=lambda m: m["part"])
+
+
+def build_split_create_input(scene: Dict, file: Dict) -> Dict[str, Any]:
+    """SceneCreateInput for one part: the file plus the original scene's
+    descriptive metadata (title, code, details, director, URLs, date,
+    studio, performers, tags). Play history, markers, rating, stash IDs
+    and groups stay with the original scene."""
+    inp: Dict[str, Any] = {"file_ids": [str(file["id"])]}
+    for key in ("title", "code", "details", "director", "date"):
+        if scene.get(key):
+            inp[key] = scene[key]
+    if scene.get("urls"):
+        inp["urls"] = list(scene["urls"])
+    if scene.get("studio"):
+        inp["studio_id"] = str(scene["studio"]["id"])
+    if scene.get("performers"):
+        inp["performer_ids"] = [str(p["id"]) for p in scene["performers"]]
+    if scene.get("tags"):
+        inp["tag_ids"] = [str(t["id"]) for t in scene["tags"]]
+    return inp
+
+
+def simulate_split(scene: Dict, moves: List[Dict]) -> List[Dict]:
+    """In-memory result of a split, used by Preview: the original keeps its
+    primary file and each moved file becomes a new scene."""
+    original = dict(scene, files=[scene["files"][0]])
+    out = [original]
+    for m in moves:
+        out.append(dict(scene, id=f"new-scene:{m['file']['id']}", files=[m["file"]], groups=[]))
+    return out
+
+
+# ---------------------------------------------------------------------------
 # GraphQL helpers
 # ---------------------------------------------------------------------------
 
@@ -477,7 +541,9 @@ def fetch_scenes_page(page: int, per_page: int = 200) -> Tuple[int, List[Dict]]:
           findScenes(filter: {per_page: $per_page, page: $page, sort: "id", direction: ASC}) {
             count
             scenes {
-              id title
+              id title code details director urls date
+              studio { id }
+              performers { id }
               files { id path basename }
               tags { id name }
               groups { group { id name } scene_index }
@@ -514,6 +580,56 @@ def scene_update(update_input: Dict[str, Any]):
         "mutation($input: SceneUpdateInput!) { sceneUpdate(input: $input) { id } }",
         {"input": update_input},
     )
+
+
+def scene_create(create_input: Dict[str, Any]) -> str:
+    created = gql(
+        "mutation($input: SceneCreateInput!) { sceneCreate(input: $input) { id } }",
+        {"input": create_input},
+    )["sceneCreate"]
+    return str(created["id"])
+
+
+def split_merged_scenes(all_scenes: List[Dict], vr_tag_id: Optional[str]) -> Tuple[List[Dict], Dict[str, int]]:
+    """Split scenes merged by older versions back into one scene per part.
+    Returns (scene list to group, stats). In Preview the returned list is
+    simulated; live, the library is re-scanned after any split."""
+    stats = {"scenes_split": 0, "scenes_created": 0, "split_errors": 0}
+    result = []
+    for sc in all_scenes:
+        moves = split_plan(sc)
+        if not moves or (VR_ONLY and not scene_has_tag(sc, vr_tag_id)):
+            result.append(sc)
+            continue
+        primary = sc["files"][0]["basename"]
+        log_info(f"\n  ⑂  Split scene {sc['id']} ({sc.get('title') or primary})")
+        log_info(f"     Keeps   : {primary}")
+        if DRY_RUN:
+            for m in moves:
+                log_info(f"     Part {m['part']}: [DRY] would move {m['file']['basename']} to a new scene")
+            stats["scenes_split"] += 1
+            stats["scenes_created"] += len(moves)
+            result.extend(simulate_split(sc, moves))
+            continue
+        created = 0
+        for m in moves:
+            try:
+                new_id = scene_create(build_split_create_input(sc, m["file"]))
+                log_info(f"     Part {m['part']}: moved {m['file']['basename']} to new scene {new_id}")
+                created += 1
+            except Exception as e:
+                log_err(f"     Part {m['part']}: could not move {m['file']['basename']}: {e}")
+                stats["split_errors"] += 1
+            if UPDATE_DELAY_S > 0:
+                time.sleep(UPDATE_DELAY_S)
+        if created:
+            stats["scenes_split"] += 1
+            stats["scenes_created"] += created
+        result.append(sc)
+    if stats["scenes_created"] and not DRY_RUN:
+        log_info("  Re-scanning library after split")
+        result = scan_library()
+    return result, stats
 
 
 # ---------------------------------------------------------------------------
@@ -570,6 +686,7 @@ def main():
     log_info(f"  Mode     : {'PREVIEW — no changes will be made' if DRY_RUN else 'LIVE — changes will be applied'}")
     log_info(f"  VR Only  : {VR_ONLY}")
     log_info(f"  Tag as VR: {TAG_AS_VR}")
+    log_info(f"  Split old merges: {SPLIT_MERGED}")
 
     vr_tag_id = find_tag_id(VR_TAG_NAME) if VR_TAG_NAME else None
     if VR_ONLY and not vr_tag_id:
@@ -583,6 +700,15 @@ def main():
     log_section("Scanning Library")
     all_scenes = scan_library()
     log_info(f"  Found {len(all_scenes)} scenes")
+
+    split_stats = {"scenes_split": 0, "scenes_created": 0, "split_errors": 0}
+    if SPLIT_MERGED:
+        log_section("Splitting Previously Merged Scenes")
+        all_scenes, split_stats = split_merged_scenes(all_scenes, vr_tag_id)
+        log_info(f"  Split {split_stats['scenes_split']} scene(s) into "
+                 f"{split_stats['scenes_created']} new scene(s)")
+        if split_stats["scenes_created"] and not DRY_RUN:
+            log_info("  New scenes have no cover yet: run Tasks → Generate (covers) afterwards")
 
     valid, skipped = detect_groups(all_scenes, VR_ONLY, vr_tag_id)
     log_info(f"  Detected {len(valid)} multipart group(s), {len(skipped)} skipped")
@@ -673,7 +799,9 @@ def main():
 
     # ---- Summary -----------------------------------------------------------
     log_section("Summary")
-    result_message = (f"Groups created: {stats['groups_created']}  |  reused: {stats['groups_reused']}  |  "
+    stats.update(split_stats)
+    result_message = (f"Scenes split: {stats['scenes_split']} (+{stats['scenes_created']} new)  |  "
+                      f"Groups created: {stats['groups_created']}  |  reused: {stats['groups_reused']}  |  "
                       f"Scenes updated: {stats['scenes_updated']}  |  unchanged: {stats['scenes_unchanged']}  |  "
                       f"Skipped: {stats['skipped']}  |  Errors: {stats['errors']}")
     log_info(f"  {result_message}")

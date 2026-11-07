@@ -5,7 +5,7 @@ description: >-
   no longer merged, so every part stays playable. Note: the VR button in the
   player is controlled natively by Settings → Interface → VR tag; this plugin
   only adds the VR tag when "Tag multipart scenes as VR" is enabled.
-version: "2.1-24bb4c5"
+version: "2.2"
 url: "https://github.com/ponponbon/ponponbon-stash-plugins"
 
 exec:
@@ -54,6 +54,15 @@ settings:
   tag_as_vr:
     displayName: Tag multipart scenes as VR
     description: Off by default. When on, also adds the VR tag to every multipart scene.
+    type: BOOLEAN
+
+  split_merged:
+    displayName: Split previously merged multipart scenes
+    description: >-
+      Off by default. Scenes that older versions merged into one scene with several
+      part files are split back into one scene per part (copying title, studio,
+      performers and tags), then grouped. Run Preview first; run Generate afterwards
+      for the new scenes' covers.
     type: BOOLEAN
 
   update_delay_ms:
