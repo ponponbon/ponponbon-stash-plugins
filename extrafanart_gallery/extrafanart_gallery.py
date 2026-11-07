@@ -1,11 +1,13 @@
-# testupdate - verify CI pipeline packages all plugins correctly
 """
 Extrafanart Gallery Linker - Stash Plugin
 ==========================================
 Scans scene directories for a subfolder named extrafanart.
 If found, creates a gallery from the images inside (via GraphQL, not
-metadataScan), sets the cover image, and links the gallery to any
-scene files in the same parent directory.
+metadataScan), adds the parent folder's cover/fanart images, sets the
+gallery cover (setGalleryCover) to the first of folder/poster/cover/board
+found, and links the gallery to any scene files in the same parent
+directory. On later runs, extrafanart images that are not yet in the linked
+gallery are added, whether the gallery came from the folder or the API.
 
 Install:  pip install requests
 """
@@ -30,6 +32,7 @@ PARENT_IMAGE_CANDIDATES = COVER_CANDIDATES + [
     "fanart.jpg", "fanart.jpeg", "fanart.png", "fanart.webp",
 ]
 FANART_FOLDER = "extrafanart"
+PLUGIN_ID = "extrafanart_gallery"
 PAGE_SIZE = 500
 
 def path_key(path):
@@ -158,7 +161,7 @@ class GQL:
             d = self.q("""query($f:FindFilterType,$gf:GalleryFilterType){
                 findGalleries(filter:$f,gallery_filter:$gf){
                     count
-                    galleries{id title folder{path} scenes{id}}
+                    galleries{id title folder{path} scenes{id} cover{id}}
                 }}""", {
                 "f": {"page": page, "per_page": PAGE_SIZE},
                 "gf": {"path": {"value": FANART_FOLDER, "modifier": "INCLUDES"}},
@@ -182,7 +185,7 @@ class GQL:
         if cache_key in self.gallery_cache:
             return self.gallery_cache[cache_key]
         d = self.q("""query($id:ID!){
-            findGallery(id:$id){id title scenes{id}}}""",
+            findGallery(id:$id){id title scenes{id} cover{id}}}""",
             {"id": gallery_id})
         gallery = d.get("findGallery")
         if gallery:
@@ -279,6 +282,11 @@ class GQL:
                     return img
         return None
 
+    def set_cover(self, gallery_id, image_id):
+        self.q("""mutation($i:GallerySetCoverInput!){
+            setGalleryCover(input:$i)}""",
+            {"i": {"gallery_id": gallery_id, "cover_image_id": image_id}})
+
     def update_gallery_title(self, gallery_id, title):
         self.q("""mutation($i:GalleryUpdateInput!){
             galleryUpdate(input:$i){id}}""",
@@ -334,6 +342,86 @@ def gallery_linked_to_scenes(gallery, scenes):
     return bool(target_sids) and target_sids.issubset(linked_sids)
 
 
+def first_cover_image(parent_imgs, parent_image_map):
+    """First parent cover candidate (folder/poster/cover/board, in that order)
+    that exists in Stash. fanart.* is never used as the cover."""
+    for pimg in parent_imgs:
+        if os.path.basename(pimg).lower() not in COVER_CANDIDATES:
+            continue
+        img = parent_image_map.get(path_key(pimg))
+        if img:
+            return img
+    return None
+
+
+def plan_gallery_actions(gallery, ef_images, parent_imgs, parent_image_map, scenes,
+                         refresh_existing=False, just_created=False):
+    """
+    Work out what to change on one gallery. Pure: no I/O.
+    Returns a dict with:
+      add_ids / add_names  - extrafanart and parent images not yet in the gallery
+      missing_parents      - True when parent images exist on disk but not in Stash
+      cover_id             - image to set as cover, or None
+      link_scenes          - scenes not yet linked to the gallery
+    """
+    gid = str(gallery["id"])
+    add_ids, add_names, seen = [], [], set()
+
+    # Extrafanart images added since the gallery was made (folder or API).
+    ef_new = 0
+    for img in ef_images:
+        iid = str(img["id"])
+        if gid in {str(g) for g in gallery_ids_for_image(img)} or iid in seen:
+            continue
+        seen.add(iid)
+        add_ids.append(iid)
+        ef_new += 1
+    if ef_new:
+        add_names.append(f"{ef_new} extrafanart image(s)")
+
+    found_parent = False
+    for pimg in parent_imgs:
+        img = parent_image_map.get(path_key(pimg))
+        if not img:
+            continue
+        found_parent = True
+        iid = str(img["id"])
+        if gid in {str(g) for g in gallery_ids_for_image(img)} or iid in seen:
+            continue
+        seen.add(iid)
+        add_ids.append(iid)
+        add_names.append(os.path.basename(pimg))
+
+    cover_id = None
+    cover = first_cover_image(parent_imgs, parent_image_map)
+    if cover:
+        cid = str(cover["id"])
+        current = str((gallery.get("cover") or {}).get("id") or "")
+        # Set it on new galleries and when the cover image was just added;
+        # otherwise only re-assert it with Refresh Existing, so a cover the
+        # user picked by hand is not overwritten on every run.
+        if current != cid and (just_created or cid in seen or refresh_existing):
+            cover_id = cid
+
+    linked = {str(s["id"]) for s in gallery.get("scenes", [])}
+    link_scenes = []
+    for sc in scenes:
+        sid = str(sc["id"])
+        scene_gids = {str(g["id"]) for g in sc.get("galleries", [])}
+        if sid in linked or gid in scene_gids:
+            continue
+        link_scenes.append(sc)
+        linked.add(sid)
+
+    return {
+        "add_ids": add_ids,
+        "add_names": add_names,
+        "missing_parents": bool(parent_imgs) and not found_parent,
+        "cover_id": cover_id,
+        "link_scenes": link_scenes,
+    }
+
+
 # --- Core ---
 def process(gql, dry_run=False, refresh_existing=False):
     # Phase 1: Find scene directories with extrafanart subfolders
@@ -358,28 +446,12 @@ def process(gql, dry_run=False, refresh_existing=False):
         log("Nothing to do.")
         return
 
-    # Phase 2: Check for existing folder-based galleries
+    # Phase 2: Existing folder-based galleries and image matches. Images are
+    # loaded for every target (not just new ones) so extrafanart images added
+    # after the gallery was created are picked up without Refresh Existing.
     ef_paths = [ef for _, ef, _ in targets]
     existing_gals = gql.find_galleries_for_paths(ef_paths)
     log(f"  {len(existing_gals)} existing folder-based gallery/galleries found")
-
-    if not refresh_existing:
-        active_targets = []
-        skipped_existing = 0
-        for parent, ef, slist in targets:
-            gallery = existing_gals.get(path_key(ef))
-            if gallery and gallery_linked_to_scenes(gallery, slist):
-                skipped_existing += 1
-                continue
-            active_targets.append((parent, ef, slist))
-
-        if skipped_existing:
-            log(f"  {skipped_existing} complete existing gallery/galleries skipped")
-        targets = active_targets
-        if not targets:
-            log("Nothing else to do.")
-            return
-        ef_paths = [ef for _, ef, _ in targets]
 
     log("Phase 2: Loading image matches...")
     images_by_ef = gql.find_images_for_dirs(ef_paths, FANART_FOLDER)
@@ -399,7 +471,8 @@ def process(gql, dry_run=False, refresh_existing=False):
 
     # Phase 3: Process each target
     log("Phase 3: Processing galleries...")
-    stats = {"created": 0, "covers": 0, "linked": 0, "skipped": 0, "errors": 0}
+    stats = {"created": 0, "images_added": 0, "covers": 0, "linked": 0,
+             "skipped": 0, "errors": 0}
     total = len(targets)
     galleries_loaded = 0
 
@@ -407,107 +480,116 @@ def process(gql, dry_run=False, refresh_existing=False):
         log_progress(i / total)
         norm_ef = path_key(ef_path)
         parent_name = os.path.basename(parent)
+        prefix = f"  [{i+1}/{total}] {parent_name}:"
         gallery = existing_gals.get(norm_ef)
+        imgs = images_by_ef.get(norm_ef, [])
+        parent_imgs = parent_imgs_by_parent.get(parent, [])
+        just_created = False
 
-        # If no folder gallery, check for images and create a virtual gallery
         if not gallery:
-            imgs = images_by_ef.get(norm_ef, [])
             if not imgs:
-                log(f"  [{i+1}/{total}] {parent_name}: no images in Stash for {ef_path}")
+                log(f"{prefix} no images in Stash for {ef_path}")
                 log(f"    Ensure path is in library and run a Scan first.")
                 stats["skipped"] += 1
                 continue
 
-            # Check if images are already in a gallery
             gal_id = pick_existing_gallery_id(imgs)
             if gal_id:
-                # Images already belong to a gallery - load its current state
-                log(f"  [{i+1}/{total}] {parent_name}: images already in gallery #{gal_id}")
                 gallery = gql.find_gallery(gal_id) or {"id": gal_id, "scenes": []}
                 galleries_loaded += 1
-                if not refresh_existing and gallery_linked_to_scenes(gallery, slist):
-                    log(f"  [{i+1}/{total}] {parent_name}: existing linked gallery skipped")
-                    stats["skipped"] += 1
-                    continue
             else:
-                # Create new gallery and add images
                 title = gallery_title_from_dir(parent_name)
                 scene_ids = list({s["id"] for s in slist})
                 if dry_run:
-                    log(f"  [{i+1}/{total}] {parent_name}: [DRY] would create '{title}' with {len(imgs)} images")
+                    log(f"{prefix} [DRY] would create '{title}' with {len(imgs)} images "
+                        f"linked to {len(scene_ids)} scene(s)")
+                    plan = plan_gallery_actions({"id": "new", "scenes": []}, [], parent_imgs,
+                                                parent_image_map, [], just_created=True)
+                    if plan["add_names"]:
+                        log(f"{prefix} [DRY] would add {', '.join(plan['add_names'])}")
+                    if plan["cover_id"]:
+                        log(f"{prefix} [DRY] would set cover to image #{plan['cover_id']}")
                     stats["created"] += 1
                     continue
                 gal_id = gql.create_gallery(title, scene_ids)
                 if not gal_id:
-                    log_err(f"  [{i+1}/{total}] {parent_name}: failed to create gallery")
+                    log_err(f"{prefix} failed to create gallery")
                     stats["errors"] += 1
                     continue
-                image_ids = [img["id"] for img in imgs]
-                gql.add_images(gal_id, image_ids)
-                log(f"  [{i+1}/{total}] {parent_name}: created gallery #{gal_id} ({len(imgs)} images)")
+                gql.add_images(gal_id, [img["id"] for img in imgs])
+                log(f"{prefix} created gallery #{gal_id} ({len(imgs)} images)")
                 stats["created"] += 1
+                just_created = True
                 gallery = {"id": gal_id, "title": title, "scenes": [{"id": s} for s in scene_ids]}
+                imgs = [dict(img, galleries=list(img.get("galleries", [])) + [{"id": gal_id}])
+                        for img in imgs]
 
         gid = gallery["id"]
+        plan = plan_gallery_actions(gallery, imgs, parent_imgs, parent_image_map, slist,
+                                    refresh_existing=refresh_existing, just_created=just_created)
+        expected_title = gallery_title_from_dir(parent_name)
+        title_change = gallery.get("title", "") != expected_title
+
+        if not (plan["add_ids"] or plan["cover_id"] or plan["link_scenes"] or title_change):
+            if plan["missing_parents"]:
+                log(f"{prefix} parent images not in Stash (run Scan)")
+            log(f"{prefix} gallery #{gid} already up to date")
+            stats["skipped"] += 1
+            continue
 
         # Sync gallery title
-        expected_title = gallery_title_from_dir(parent_name)
-        cur_title = gallery.get("title", "")
-        if cur_title != expected_title and not dry_run:
-            gql.update_gallery_title(gid, expected_title)
-            log(f"  [{i+1}/{total}] {parent_name}: title updated -> '{expected_title}'")
+        if title_change:
+            if dry_run:
+                log(f"{prefix} [DRY] would set title -> '{expected_title}'")
+            else:
+                gql.update_gallery_title(gid, expected_title)
+                log(f"{prefix} title updated -> '{expected_title}'")
 
-        # Add parent images (folder.jpg, fanart.jpg, etc) to gallery
-        parent_imgs = parent_imgs_by_parent.get(parent, [])
-        if parent_imgs:
-            added_names = []
-            ids_to_add = []
-            found_parent_images = False
-            for pimg in parent_imgs:
-                img = parent_image_map.get(path_key(pimg))
-                if not img:
-                    continue
-                found_parent_images = True
-                if gid in gallery_ids_for_image(img):
-                    continue
-                ids_to_add.append(img["id"])
-                added_names.append(os.path.basename(pimg))
-            if dry_run and ids_to_add:
-                log(f"  [{i+1}/{total}] {parent_name}: [DRY] would add {', '.join(added_names)}")
-                stats["covers"] += 1
-            elif ids_to_add:
-                gql.add_images(gid, ids_to_add)
-                log(f"  [{i+1}/{total}] {parent_name}: added {', '.join(added_names)}")
-                stats["covers"] += 1
-            elif not found_parent_images:
-                log(f"  [{i+1}/{total}] {parent_name}: parent images not in Stash (run Scan)")
-        else:
-            log(f"  [{i+1}/{total}] {parent_name}: no parent images found")
+        # Add new extrafanart images and parent images (folder.jpg, fanart.jpg ...)
+        if plan["add_ids"]:
+            names = ", ".join(plan["add_names"])
+            if dry_run:
+                log(f"{prefix} [DRY] would add {names} to gallery #{gid}")
+            else:
+                gql.add_images(gid, plan["add_ids"])
+                log(f"{prefix} added {names} to gallery #{gid}")
+            stats["images_added"] += len(plan["add_ids"])
+        elif plan["missing_parents"]:
+            log(f"{prefix} parent images not in Stash (run Scan)")
+        elif not parent_imgs:
+            log(f"{prefix} no parent images found")
+
+        # Cover image
+        if plan["cover_id"]:
+            if dry_run:
+                log(f"{prefix} [DRY] would set cover to image #{plan['cover_id']}")
+            else:
+                gql.set_cover(gid, plan["cover_id"])
+                log(f"{prefix} cover set to image #{plan['cover_id']}")
+            stats["covers"] += 1
 
         # Link to scenes
-        linked_sids = {s["id"] for s in gallery.get("scenes", [])}
-        for sc in slist:
+        for sc in plan["link_scenes"]:
             sid = sc["id"]
-            scene_gids = {g["id"] for g in sc.get("galleries", [])}
-            if sid in linked_sids or gid in scene_gids:
-                continue
             if dry_run:
                 log(f"    [DRY] would link to scene {sc.get('title') or sid}")
             else:
                 eg = [g["id"] for g in sc.get("galleries", [])]
                 gql.link_scene(sid, gid, eg)
                 log(f"    linked to scene: {sc.get('title') or sid}")
-                stats["linked"] += 1
-                linked_sids.add(sid)
+            stats["linked"] += 1
 
     log_progress(1.0)
     log("=" * 40)
-    log(f"Done! Created={stats['created']} Covers={stats['covers']} "
-        f"Linked={stats['linked']} Skipped={stats['skipped']} Errors={stats['errors']}")
+    log(f"Done! Created={stats['created']} ImagesAdded={stats['images_added']} "
+        f"Covers={stats['covers']} Linked={stats['linked']} "
+        f"Skipped={stats['skipped']} Errors={stats['errors']}")
     if galleries_loaded:
         log(f"Loaded {galleries_loaded} existing image-backed gallery/galleries")
     if dry_run:
         log("(Dry run - no changes made)")
+    return stats
+
 
 # --- Entry ---
 def main():
@@ -521,11 +603,18 @@ def main():
     api_key = api_key_from_input(pi)
     mode = pi.get("args", {}).get("mode", "link")
     dry_run = mode == "dry_run"
-    refresh_existing = truthy(pi.get("args", {}).get("refresh_existing", False))
     log(f"Mode: {'DRY RUN' if dry_run else 'LIVE'}")
-    log(f"Refresh existing: {'yes' if refresh_existing else 'no'}")
     log(f"Endpoint: {gql_url} ({url_source})")
     g = GQL(gql_url, api_key or None, srv.get("SessionCookie"))
+    # Stash does not pass saved plugin settings in args; read them from the
+    # plugin configuration (a task arg still takes precedence).
+    refresh_arg = pi.get("args", {}).get("refresh_existing")
+    if refresh_arg is None:
+        saved = (g.q("""query($ids:[ID!]){configuration{plugins(include:$ids)}}""",
+                     {"ids": [PLUGIN_ID]}).get("configuration") or {}).get("plugins") or {}
+        refresh_arg = (saved.get(PLUGIN_ID) or {}).get("refresh_existing", False)
+    refresh_existing = truthy(refresh_arg)
+    log(f"Refresh existing: {'yes' if refresh_existing else 'no'}")
     process(g, dry_run, refresh_existing)
     print(json.dumps({"output": "ok"}))
 

@@ -1,6 +1,6 @@
 name: "Extrafanart Gallery Linker"
 description: Links extrafanart folders to parent scene galleries.
-version: "1.16-89d2a4c"
+version: "1.17"
 url: https://github.com/ponponbon/ponponbon-stash-plugins
 
 exec:
@@ -11,7 +11,7 @@ interface: raw
 
 tasks:
   - name: "Link Galleries"
-    description: Create or reuse extrafanart galleries and link them to scenes.
+    description: Create or reuse extrafanart galleries, add new images, set the cover and link them to scenes.
     defaultArgs:
       mode: "link"
 
@@ -33,5 +33,5 @@ settings:
 
   refresh_existing:
     displayName: Refresh Existing Galleries
-    description: Re-check galleries that are already linked.
+    description: Also re-apply the folder/poster/cover/board cover on galleries whose cover differs.
     type: BOOLEAN
