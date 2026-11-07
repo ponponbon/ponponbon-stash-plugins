@@ -1,0 +1,50 @@
+name: "Performer Cleanup"
+description: >-
+  One-time performer cleanup (requires Stash v0.31+). Merges performers that share
+  a stash-box ID, links unlinked performers to a unique exact JavStash/StashDB match,
+  adds missing performers to identified scenes, tags possible duplicates for review,
+  optionally deletes orphans, and configures Identify defaults so Stash's native
+  Identify keeps the library clean afterwards. Run Preview first.
+version: "2.0"
+url: https://github.com/ponponbon/ponponbon-stash-plugins
+
+exec:
+  - python3
+  - "{pluginDir}/performer_cleanup.py"
+
+interface: raw
+
+tasks:
+  - name: "Preview"
+    description: Log every merge, link, creation, tag, deletion and Identify change that would happen. Writes nothing.
+    defaultArgs:
+      mode: "preview"
+
+  - name: "Clean Up Performers"
+    description: Run all cleanup steps and apply the changes.
+    defaultArgs:
+      mode: "cleanup"
+
+settings:
+  api_key:
+    displayName: API Key
+    description: Optional. Use when Stash API auth is enabled.
+    type: STRING
+
+  delete_orphans:
+    displayName: Delete performers with no scenes, images or galleries
+    description: Off by default. Performers with a stash ID are never deleted.
+    type: BOOLEAN
+
+  set_identify_defaults:
+    displayName: Configure Identify defaults for performers
+    description: >-
+      On by default (an unset value counts as on). Puts JavStash first, lets stash-box
+      sources create missing performers, stops scraper sources from adding performers,
+      and turns off "skip single name performers".
+    type: BOOLEAN
+
+  review_tag:
+    displayName: Possible duplicate tag
+    description: Tag added to performers that may be duplicates. Defaults to "Review: Possible Duplicate".
+    type: STRING

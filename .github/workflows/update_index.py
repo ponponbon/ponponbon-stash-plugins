@@ -12,13 +12,13 @@ descriptions = {
     "merge_multipart":     "Links multipart scenes into Groups ordered by part number",
     "extrafanart_gallery": "Links extrafanart folders to parent scene galleries",
     "performer_name_sync": "Syncs performer names and metadata across JavStash and StashDB",
-    "create_missing_performers": "Creates missing local performers from identified stash-box scenes",
+    "performer_cleanup": "One-time performer cleanup: merge, link, fill scenes, flag duplicates, set Identify defaults",
 }
 names = {
     "merge_multipart":     "merge_multipart",
     "extrafanart_gallery": "extrafanart_gallery",
     "performer_name_sync": "performer_name_sync",
-    "create_missing_performers": "create_missing_performers",
+    "performer_cleanup": "performer_cleanup",
 }
 
 if plugin_id not in descriptions:
