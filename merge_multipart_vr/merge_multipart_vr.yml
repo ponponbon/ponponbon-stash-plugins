@@ -5,7 +5,7 @@ description: >-
   no longer merged, so every part stays playable. Note: the VR button in the
   player is controlled natively by Settings → Interface → VR tag; this plugin
   only adds the VR tag when "Tag multipart scenes as VR" is enabled.
-version: "2.0"
+version: "2.1-24bb4c5"
 url: "https://github.com/ponponbon/ponponbon-stash-plugins"
 
 exec:
